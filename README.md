@@ -1,74 +1,67 @@
-# FessBot — Channel Repost Bot
+# FessBot — Advanced Telegram Repost Bot
 
-Bot Pyrogram untuk meneruskan postingan channel partner ke channel utama secara otomatis.
+Bot Telegram untuk auto-repost foto/video dari channel partner ke channel utama.
 
----
+## Fitur
 
-## Instalasi di Termux
+### User
+- `/start` — Mulai & lihat panduan
+- `📂 My Channel` — Kelola channel terdaftar
+- `📊 Statistik Channel` — Lihat total repost per channel
+- `ℹ️ Info Bot` — Info global bot
+- Toggle pause/aktif channel sendiri
 
+### Owner
+- `📊 Dashboard` — Statistik real-time + bar chart
+- `📋 Channel Partner` — Daftar semua partner + detail
+- `🔎 Cari Channel` — Search partner by nama/username
+- `📣 Broadcast` — Blast pesan ke semua user / owner partner
+- `🚫 Blacklist` — Blokir kata tertentu dari repost
+- `🔧 Maintenance` — Aktifkan/nonaktifkan maintenance mode
+
+### Fitur Otomatis
+- Repost real-time foto & video
+- Notifikasi ke owner setiap postingan berhasil di-repost
+- Filter blacklist kata otomatis
+- Notifikasi jika bot dicopot dari admin
+- Counter repost per channel
+- Auto-hapus repost jika post asli dihapus
+
+## Commands Owner
+| Command | Fungsi |
+|---|---|
+| `/stats` | Lihat statistik |
+| `/listpartner` | Daftar partner |
+| `/pause <ID> <alasan>` | Jeda channel |
+| `/run <ID> <alasan>` | Aktifkan channel |
+| `/broadcast <pesan>` | Blast ke semua user |
+| `/broadcastpartner <pesan>` | Blast ke owner partner |
+| `/addbl <kata>` | Tambah blacklist |
+| `/rmbl <kata>` | Hapus blacklist |
+| `/listbl` | Lihat daftar blacklist |
+| `/maintenance <alasan>` | Aktifkan maintenance |
+| `/unmaintenance` | Nonaktifkan maintenance |
+
+## Setup
+
+1. Clone repo & install dependencies
 ```bash
-pkg update && pkg install python git -y
 pip install -r requirements.txt
 ```
 
-## Konfigurasi
-
-Edit file `.env` dan isi semua variabel:
-
+2. Copy `.env` dan isi konfigurasi:
 ```
-API_ID            = dari https://my.telegram.org
-API_HASH          = dari https://my.telegram.org
-BOT_TOKEN         = dari @BotFather
-MONGO_URI         = connection string MongoDB Atlas
-MAIN_CHANNEL_ID   = ID channel utama (format: -100xxxxxxxxxx)
-MAIN_CHANNEL_USERNAME = username channel utama (tanpa @)
-OWNER_ID          = user ID Telegram kamu (cek via @userinfobot)
-BOT_USERNAME      = username bot (tanpa @)
+API_ID=
+API_HASH=
+BOT_TOKEN=
+MONGO_URI=
+MAIN_CHANNEL_ID=
+MAIN_CHANNEL_USERNAME=
+OWNER_ID=
+BOT_USERNAME=
 ```
 
-## Jalankan Bot
-
+3. Jalankan:
 ```bash
 python main.py
 ```
-
-## Persiapan Penting
-
-1. **Bot harus dijadikan admin di channel utama** dengan hak:
-   - Post Messages
-   - Delete Messages
-   - Read Messages (agar bisa cek membership)
-
-2. **MongoDB Atlas** — buat cluster gratis di https://mongodb.com/atlas
-
----
-
-## Struktur File
-
-```
-fessbot/
-├── main.py              # Entry point
-├── config.py            # Load .env
-├── utils.py             # Helper: cek membership, pagination
-├── .env                 # Konfigurasi (jangan di-share!)
-├── requirements.txt
-├── db/
-│   ├── mongo.py         # Koneksi MongoDB
-│   └── helpers.py       # CRUD functions
-└── plugins/
-    ├── start.py         # /start — welcome owner & user
-    ├── membership.py    # Cek join, notif member baru
-    ├── repost.py        # Auto-repost + deteksi bot dijadikan admin
-    ├── mychannel.py     # Tombol My Channel untuk user
-    ├── owner.py         # Panel owner: /pause /run /stats /listpartner
-    └── guard.py         # Blokir user yang belum join
-```
-
-## Perintah Owner
-
-| Perintah | Fungsi |
-|---|---|
-| `/pause <ID> <alasan>` | Hentikan forward dari channel partner |
-| `/run <ID> <alasan>` | Aktifkan kembali forward |
-| `/stats` | Statistik bot |
-| `/listpartner` | Daftar semua channel partner |
