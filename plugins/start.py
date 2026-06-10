@@ -122,7 +122,7 @@ async def start(client: Client, message: Message):
         upsert_user(user_id, {"joined": True, "joined_at": datetime.utcnow()})
         btn = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ Jadikan Bot Admin di Channelku",
-             url=f"https://t.me/{BOT_USERNAME}?startchannel=invite_link&admin=post_messages+edit_messages+delete_messages")]
+             url=f"https://t.me/{BOT_USERNAME}?startchannel=true&admin=invite_users&admin=post_messages+edit_messages+delete_messages")]
         ])
         await message.reply(
             USER_JOINED.format(name=user_name),
