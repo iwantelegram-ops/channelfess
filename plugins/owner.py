@@ -399,13 +399,13 @@ async def cb_search_prompt(client, cb):
     )
     await cb.answer()
 
-@Client.on_message(filters.text & filters.private)
+@Client.on_message(filters.text & filters.private & ~filters.command(["start","stats","pause","run","listpartner","daftarkan","broadcast","broadcastpartner","maintenance","unmaintenance","addbl","rmbl","listbl"]))
 async def handle_search_input(client, message):
     if message.from_user.id != OWNER_ID:
         return
     if message.from_user.id not in _search_pending:
         return
-    if message.text.startswith("/") or message.text in {"📊 Dashboard","📋 Channel Partner","📣 Broadcast","🔧 Tools"}:
+    if message.text in {"📊 Dashboard","📋 Channel Partner","📣 Broadcast","🔧 Tools","📂 My Channel","ℹ️ Info Bot"}:
         return
 
     _search_pending.discard(message.from_user.id)
