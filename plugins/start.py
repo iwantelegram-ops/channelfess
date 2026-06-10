@@ -1,12 +1,16 @@
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import MAIN_CHANNEL_ID
+from config import MAIN_CHANNEL_ID, MAIN_CHANNEL_USERNAME
 from db.mongo import users
 
 @Client.on_message(filters.command("start") & filters.private)
 async def start(client, message):
     user_id = message.from_user.id
     users.update_one({"_id": user_id}, {"$set": {"joined": False}}, upsert=True)
+
+    join_button = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Join Channel Utama", url=f"https://t.me/{MAIN_CHANNEL_USERNAME}")]
+    ])
 
     try:
         member = await client.get_chat_member(MAIN_CHANNEL_ID, user_id)
@@ -16,15 +20,17 @@ async def start(client, message):
                 "✅ Kamu sudah join channel utama.\n"
                 "Gunakan tombol di bawah untuk menautkan bot ke channelmu.",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("➕ Admin-kan Bot", url="https://t.me/your_bot?start=link")]
+                    [InlineKeyboardButton("➕ Admin-kan Bot", url=f"https://t.me/{MAIN_CHANNEL_USERNAME}")]
                 ])
             )
         else:
             await message.reply(
-                "⚠️ Kamu harus join channel utama dulu.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Join Channel Utama", url="https://t.me/your_main_channel")]
-                ])
+                "⚠️ Kamu harus join channel utama dulu sebelum menggunakan bot ini.",
+                reply_markup=join_button
             )
-    except:
-        await message.reply("⚠️ Kamu harus join channel utama dulu.")
+    except Exception:
+        # Bot belum admin channel, atau user belum pernah join — tetap tampilkan tombol
+        await message.reply(
+            "⚠️ Kamu harus join channel utama dulu sebelum menggunakan bot ini.",
+            reply_markup=join_button
+        )
