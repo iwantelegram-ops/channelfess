@@ -1,23 +1,14 @@
-import os
 from pyrogram import Client
-from dotenv import load_dotenv
+from config import API_ID, API_HASH, BOT_TOKEN
+import importlib
+import os
 
-load_dotenv()
+app = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Load plugins
+for file in os.listdir("plugins"):
+    if file.endswith(".py"):
+        importlib.import_module(f"plugins.{file[:-3]}")
 
-plugins = dict(root="plugins")
-
-bot = Client(
-    "forwarder_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    plugins=plugins
-)
-
-if __name__ == "__main__":
-    print("Bot Berhasil Dijalankan di Termux!")
-    bot.run()
+print("Bot started...")
+app.run()
