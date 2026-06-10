@@ -8,7 +8,7 @@ from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton
 )
 from pyrogram.enums import ChatMemberStatus, ChatType
-from config import MAIN_CHANNEL_ID
+from config import MAIN_CHANNEL_ID, BOT_USERNAME
 from db.helpers import (
     get_partner, upsert_partner, save_post, get_post, delete_post
 )
@@ -31,7 +31,7 @@ def build_caption(original_caption, channel_title, channel_username, owner_name,
 🕒  **Jam**     :  {time}
 🆔  **Post ID** :  `{post_id}`
 ━━━━━━━━━━━━━━━━━━━━
-🔁  _via FessBot_""".strip()
+🔁  [via {BOT_USERNAME}](https://t.me/{BOT_USERNAME}?start=start)""".strip()
 
 
 # ── Deteksi bot dijadikan admin di channel ────────────────

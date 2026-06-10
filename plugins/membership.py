@@ -36,7 +36,7 @@ async def recheck_join(client: Client, cb: CallbackQuery):
         upsert_user(user_id, {"joined": True, "joined_at": datetime.utcnow()})
         btn = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ Jadikan Bot Admin di Channelku",
-             url=f"https://t.me/{BOT_USERNAME}?startchannel=link&admin=post_messages+edit_messages+delete_messages")]
+             url=f"https://t.me/{BOT_USERNAME}?startchannel=true&admin=post_messages+edit_messages+delete_messages+invite_users")]
         ])
         await cb.message.edit_text(USER_JOINED_NOTIF.format(name=user_name), reply_markup=btn)
     else:
@@ -63,7 +63,7 @@ async def on_new_member(client: Client, update: ChatMemberUpdated):
 
         btn = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ Jadikan Bot Admin di Channelku",
-             url=f"https://t.me/{BOT_USERNAME}?startchannel=link&admin=post_messages+edit_messages+delete_messages")]
+             url=f"https://t.me/{BOT_USERNAME}?startchannel=true&admin=post_messages+edit_messages+delete_messages+invite_users")]
         ])
         try:
             await client.send_message(
