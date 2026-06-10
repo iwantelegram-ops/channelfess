@@ -8,43 +8,43 @@ from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton
 )
 from pyrogram.enums import ChatMemberStatus, ChatType
-from config import MAIN_CHANNEL_ID, MAIN_CHANNEL_USERNAME
+from config import MAIN_CHANNEL_ID
 from db.helpers import (
     get_partner, upsert_partner, save_post, get_post, delete_post
 )
 from datetime import datetime, timezone
 
-def build_caption(original_caption: str, channel_title: str,
-                  channel_username: str, owner_name: str, post_id: int) -> str:
-    now  = datetime.now(timezone.utc)
-    date = now.strftime("%d %b %Y")
-    time = now.strftime("%H:%M UTC")
+def build_caption(original_caption, channel_title, channel_username, owner_name, post_id):
+    now   = datetime.now(timezone.utc)
+    date  = now.strftime("%d %b %Y")
+    time  = now.strftime("%H:%M UTC")
     uname = f"@{channel_username}" if channel_username else "—"
 
-    cap = f"""**{channel_title}**  {uname}
+    return f"""**{channel_title}**  {uname}
 
 {original_caption or ""}
 
 ━━━━━━━━━━━━━━━━━━━━
-👤  **Owner**  :  {owner_name}
+👤  **Owner**   :  {owner_name}
 📅  **Tanggal** :  {date}
 🕒  **Jam**     :  {time}
 🆔  **Post ID** :  `{post_id}`
 ━━━━━━━━━━━━━━━━━━━━
-🔁  _via FessBot_"""
-    return cap.strip()
+🔁  _via FessBot_""".strip()
 
-# ── Bot dijadikan admin di channel baru ───────────────────
-@Client.on_my_chat_member()
-async def on_bot_admin(client: Client, update: ChatMemberUpdated):
-    """Tangkap saat bot di-promote jadi admin di sebuah channel."""
-    if update.chat.type != ChatType.CHANNEL:
+
+# ── Deteksi bot dijadikan/dicopot admin di channel ────────
+@Client.on_chat_member_updated(filters.channel)
+async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
+    """Tangkap saat status bot berubah di sebuah channel."""
+    # Hanya proses jika yang berubah adalah bot itu sendiri
+    me = await client.get_me()
+    if not update.new_chat_member or update.new_chat_member.user.id != me.id:
         return
 
+    channel_id = update.chat.id
     new_status = update.new_chat_member.status
     old_status = update.old_chat_member.status if update.old_chat_member else None
-
-    channel_id = update.chat.id
 
     # Bot baru dijadikan admin
     if new_status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
@@ -54,44 +54,41 @@ async def on_bot_admin(client: Client, update: ChatMemberUpdated):
             owner_name = inviter.first_name if inviter else "Unknown"
 
             upsert_partner(channel_id, {
-                "owner_id":      owner_id,
-                "owner_name":    owner_name,
-                "channel_name":  update.chat.title,
-                "username":      update.chat.username or "",
-                "paused":        False,
-                "reason":        "",
-                "added_at":      datetime.utcnow()
+                "owner_id":     owner_id,
+                "owner_name":   owner_name,
+                "channel_name": update.chat.title,
+                "username":     update.chat.username or "",
+                "paused":       False,
+                "reason":       "",
+                "added_at":     datetime.utcnow()
             })
 
-            # Notif ke user
             if inviter:
                 try:
                     await client.send_message(
                         owner_id,
                         f"✅ **Channel terdaftar sebagai partner!**\n\n"
                         f"📡 **{update.chat.title}** kini terhubung ke channel utama.\n"
-                        f"Setiap foto/video yang kamu post akan diteruskan secara otomatis.\n\n"
-                        f"Gunakan tombol **My Channel** di menu bot untuk mengatur channel kamu.",
+                        f"Setiap foto/video yang kamu post akan diteruskan otomatis.\n\n"
+                        f"Gunakan tombol **My Channel** di menu bot untuk mengatur channel kamu."
                     )
                 except Exception:
                     pass
 
-    # Bot dikeluarkan / dicopot admin
+    # Bot dicopot / keluar
     elif new_status in (ChatMemberStatus.MEMBER, ChatMemberStatus.LEFT, ChatMemberStatus.BANNED):
-        # Tandai sebagai paused tapi jangan hapus riwayat
         existing = get_partner(channel_id)
         if existing:
             upsert_partner(channel_id, {"paused": True, "reason": "Bot dicopot dari admin channel"})
 
-# ── Repost dari channel partner ───────────────────────────
+
+# ── Repost foto/video dari channel partner ────────────────
 @Client.on_message(filters.channel & (filters.photo | filters.video))
 async def repost(client: Client, message: Message):
     channel_id = message.chat.id
     partner    = get_partner(channel_id)
 
-    if not partner:
-        return
-    if partner.get("paused"):
+    if not partner or partner.get("paused"):
         return
 
     caption = build_caption(
@@ -102,11 +99,10 @@ async def repost(client: Client, message: Message):
         post_id          = message.id
     )
 
-    chan_uname = partner.get("username", "")
-    if chan_uname:
-        original_url = f"https://t.me/{chan_uname}/{message.id}"
+    uname = partner.get("username", "")
+    if uname:
+        original_url = f"https://t.me/{uname}/{message.id}"
     else:
-        # Channel private: gunakan format t.me/c/
         cid_str      = str(channel_id).replace("-100", "")
         original_url = f"https://t.me/c/{cid_str}/{message.id}"
 
@@ -115,21 +111,17 @@ async def repost(client: Client, message: Message):
     ])
 
     try:
-        sent = await message.copy(
-            MAIN_CHANNEL_ID,
-            caption   = caption,
-            reply_markup = btn
-        )
+        sent = await message.copy(MAIN_CHANNEL_ID, caption=caption, reply_markup=btn)
         save_post(channel_id, message.id, sent.id)
     except Exception as e:
-        print(f"[repost] Gagal copy ke main channel: {e}")
+        print(f"[repost] Gagal: {e}")
+
 
 # ── Hapus repost jika postingan asli dihapus ──────────────
 @Client.on_deleted_messages(filters.channel)
 async def delete_repost(client: Client, messages):
     for msg in messages:
-        # messages bisa berupa list of Message atau Message tunggal
-        channel_id = getattr(msg.chat, "id", None) if hasattr(msg, "chat") and msg.chat else None
+        channel_id = getattr(getattr(msg, "chat", None), "id", None)
         if not channel_id:
             continue
         post = get_post(channel_id, msg.id)
