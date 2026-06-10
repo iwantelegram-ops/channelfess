@@ -1,13 +1,16 @@
 """
 Auto-repost dari channel partner ke channel utama.
 Deteksi bot dijadikan admin → daftarkan sebagai partner.
+FloodWait ditangani dengan asyncio.sleep otomatis.
 """
+import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import (
     Message, ChatMemberUpdated,
     InlineKeyboardMarkup, InlineKeyboardButton
 )
 from pyrogram.enums import ChatMemberStatus, ChatType
+from pyrogram.errors import FloodWait, MessageNotModified, ChatWriteForbidden
 from config import MAIN_CHANNEL_ID, BOT_USERNAME
 from db.helpers import (
     get_partner, upsert_partner, save_post, get_post, delete_post
@@ -15,7 +18,7 @@ from db.helpers import (
 from datetime import datetime, timezone
 
 
-def build_caption(original_caption, channel_title, channel_username, owner_name, post_id):
+def build_caption(original_caption, channel_title, channel_username, owner_name):
     now   = datetime.now(timezone.utc)
     date  = now.strftime("%d %b %Y")
     time  = now.strftime("%H:%M UTC")
@@ -29,9 +32,23 @@ def build_caption(original_caption, channel_title, channel_username, owner_name,
 👤  **Owner**   :  {owner_name}
 📅  **Tanggal** :  {date}
 🕒  **Jam**     :  {time}
-🆔  **Post ID** :  `{post_id}`
 ━━━━━━━━━━━━━━━━━━━━
 🔁  [via {BOT_USERNAME}](https://t.me/{BOT_USERNAME}?start=start)""".strip()
+
+
+async def safe_send(coro, retries=3):
+    """Jalankan coroutine Telegram dengan penanganan FloodWait otomatis."""
+    for attempt in range(retries):
+        try:
+            return await coro
+        except FloodWait as e:
+            wait = e.value + 2  # tambah buffer 2 detik
+            print(f"[FloodWait] Tunggu {wait}s (percobaan {attempt+1}/{retries})")
+            await asyncio.sleep(wait)
+        except (ChatWriteForbidden, Exception) as e:
+            print(f"[safe_send] Error: {e}")
+            return None
+    return None
 
 
 # ── Deteksi bot dijadikan admin di channel ────────────────
@@ -51,7 +68,6 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
             owner_id   = inviter.id if inviter else 0
             owner_name = inviter.first_name if inviter else "Unknown"
 
-            # Simpan dulu dengan paused=True, tunggu konfirmasi user
             upsert_partner(channel_id, {
                 "owner_id":     owner_id,
                 "owner_name":   owner_name,
@@ -63,21 +79,18 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
             })
 
             if inviter:
-                try:
-                    await client.send_message(
-                        owner_id,
-                        f"🎉 **Channel berhasil ditambahkan!**\n\n"
-                        f"📡 **{update.chat.title}** sudah terhubung ke bot.\n\n"
-                        f"Apakah kamu ingin mulai meneruskan postingan dari channel ini ke channel utama?",
-                        reply_markup=InlineKeyboardMarkup([
-                            [
-                                InlineKeyboardButton("✅ Sinkron", callback_data=f"confirm_sync_{channel_id}"),
-                                InlineKeyboardButton("❌ Tidak", callback_data=f"confirm_nosync_{channel_id}")
-                            ]
-                        ])
-                    )
-                except Exception:
-                    pass
+                await safe_send(client.send_message(
+                    owner_id,
+                    f"🎉 **Channel berhasil ditambahkan!**\n\n"
+                    f"📡 **{update.chat.title}** sudah terhubung ke bot.\n\n"
+                    f"Apakah kamu ingin mulai meneruskan postingan dari channel ini ke channel utama?",
+                    reply_markup=InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton("✅ Sinkron", callback_data=f"confirm_sync_{channel_id}"),
+                            InlineKeyboardButton("❌ Tidak",   callback_data=f"confirm_nosync_{channel_id}")
+                        ]
+                    ])
+                ))
 
     elif new_status in (ChatMemberStatus.MEMBER, ChatMemberStatus.LEFT, ChatMemberStatus.BANNED):
         existing = get_partner(channel_id)
@@ -98,12 +111,12 @@ async def cb_confirm_sync(client, cb):
     upsert_partner(channel_id, {"paused": False, "reason": ""})
     ch_name = partner.get("channel_name", str(channel_id))
 
-    await cb.message.edit_text(
+    await safe_send(cb.message.edit_text(
         f"✅ **Sinkronisasi aktif!**\n\n"
         f"📡 **{ch_name}** kini meneruskan postingan ke channel utama secara otomatis.\n\n"
         f"Gunakan tombol **My Channel** untuk mengatur channel kamu kapan saja."
-    )
-    await cb.answer("Sinkron diaktifkan!", show_alert=False)
+    ))
+    await cb.answer("Sinkron diaktifkan!")
 
 
 @Client.on_callback_query(filters.regex(r"^confirm_nosync_(-?\d+)$"))
@@ -118,12 +131,12 @@ async def cb_confirm_nosync(client, cb):
     ch_name = partner.get("channel_name", str(channel_id))
     upsert_partner(channel_id, {"paused": True, "reason": "Tidak diaktifkan oleh owner"})
 
-    await cb.message.edit_text(
+    await safe_send(cb.message.edit_text(
         f"⏸ **Sinkronisasi tidak diaktifkan.**\n\n"
         f"📡 **{ch_name}** terdaftar tapi tidak meneruskan postingan.\n\n"
         f"Kamu bisa mengaktifkannya kapan saja lewat tombol **My Channel**."
-    )
-    await cb.answer("Oke, bisa diaktifkan nanti.", show_alert=False)
+    ))
+    await cb.answer("Oke, bisa diaktifkan nanti.")
 
 
 # ── /daftarkan — fallback manual ──────────────────────────
@@ -153,6 +166,10 @@ async def cmd_daftarkan(client: Client, message: Message):
         if member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
             await message.reply(f"❌ Bot belum dijadikan admin di **{chat.title}**.")
             return
+    except FloodWait as e:
+        await asyncio.sleep(e.value + 2)
+        await message.reply("⚠️ Terkena rate limit, coba lagi sebentar.")
+        return
     except Exception as e:
         await message.reply(f"❌ Bot tidak bisa mengakses channel ini.\n`{e}`")
         return
@@ -183,7 +200,7 @@ async def cmd_daftarkan(client: Client, message: Message):
         reply_markup=InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("✅ Sinkron", callback_data=f"confirm_sync_{channel_id}"),
-                InlineKeyboardButton("❌ Tidak", callback_data=f"confirm_nosync_{channel_id}")
+                InlineKeyboardButton("❌ Tidak",   callback_data=f"confirm_nosync_{channel_id}")
             ]
         ])
     )
@@ -203,7 +220,6 @@ async def repost(client: Client, message: Message):
         channel_title    = partner.get("channel_name", message.chat.title),
         channel_username = partner.get("username", ""),
         owner_name       = partner.get("owner_name", "Unknown"),
-        post_id          = message.id
     )
 
     uname = partner.get("username", "")
@@ -217,11 +233,9 @@ async def repost(client: Client, message: Message):
         [InlineKeyboardButton("🔗 Lihat Postingan Asli", url=original_url)]
     ])
 
-    try:
-        sent = await message.copy(MAIN_CHANNEL_ID, caption=caption, reply_markup=btn)
+    sent = await safe_send(message.copy(MAIN_CHANNEL_ID, caption=caption, reply_markup=btn))
+    if sent:
         save_post(channel_id, message.id, sent.id)
-    except Exception as e:
-        print(f"[repost] Gagal: {e}")
 
 
 # ── Hapus repost jika postingan asli dihapus ──────────────
@@ -233,8 +247,5 @@ async def delete_repost(client: Client, messages):
             continue
         post = get_post(channel_id, msg.id)
         if post:
-            try:
-                await client.delete_messages(MAIN_CHANNEL_ID, post["main_msg_id"])
-            except Exception:
-                pass
+            await safe_send(client.delete_messages(MAIN_CHANNEL_ID, post["main_msg_id"]))
             delete_post(channel_id, msg.id)
