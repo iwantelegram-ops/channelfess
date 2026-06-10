@@ -1,5 +1,5 @@
 """
-/start handler — deteksi owner vs user, cek membership, panduan lengkap.
+/start — deteksi owner vs user, welcome screen, panduan.
 """
 from pyrogram import Client, filters
 from pyrogram.types import (
@@ -7,85 +7,52 @@ from pyrogram.types import (
     ReplyKeyboardMarkup, KeyboardButton
 )
 from config import OWNER_ID, MAIN_CHANNEL_USERNAME, BOT_USERNAME
-from db.helpers import upsert_user, get_user, get_all_partners, get_partners_by_owner
+from db.helpers import upsert_user, get_user, get_maintenance
 from utils import check_membership
 
 OWNER_WELCOME = """
-╔══════════════════════════════╗
-║   🛡️  PANEL OWNER — FESSBOT  ║
-╚══════════════════════════════╝
+⚡ **FessBot — Control Panel**
 
-Selamat datang, Owner!
+`System online · All services running`
 
-📡 **Cara Kerja Bot**
-Bot ini meneruskan setiap postingan foto/video dari channel partner ke channel utama secara otomatis, lengkap dengan identitas channel, waktu post, dan tautan ke postingan asli.
-
-━━━━━━━━━━━━━━━━━━━━━━━
-📋 **Daftar Perintah Owner**
-━━━━━━━━━━━━━━━━━━━━━━━
-
-`/pause <ID> <alasan>`
-→ Hentikan sementara forward dari channel partner
-
-`/run <ID> <alasan>`
-→ Aktifkan kembali forward channel partner
-
-`/stats`
-→ Statistik singkat: total partner, total repost
-
-`/listpartner`
-→ Daftar semua channel partner (halaman 15 per halaman)
-
-━━━━━━━━━━━━━━━━━━━━━━━
-ℹ️ Alasan pada /pause dan /run akan otomatis dikirim ke pemilik channel partner.
+Pilih menu di bawah untuk mulai kelola bot.
 """
 
 USER_NOT_JOINED = """
-👋 Halo, **{name}**!
+👋 Yo, **{name}**!
 
-Selamat datang di **FessBot** — bot repost otomatis untuk channel Telegram.
+Sebelum lanjut, kamu perlu join **channel utama** dulu.
 
-━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ **Kamu belum bergabung ke channel utama.**
+> Di sanalah semua postingan channelmu bakal tampil & dilihat orang banyak 🔥
 
-Untuk menggunakan fitur bot ini, kamu harus join dulu ke channel utama kami.
-━━━━━━━━━━━━━━━━━━━━━━━
+Tap **Join** → lalu **Cek Ulang**.
 """
 
 USER_JOINED = """
-✅ **Kamu sudah terdaftar, {name}!**
+⚡ **Halo, {name}!**
 
-━━━━━━━━━━━━━━━━━━━━━━━
-📖 **Panduan Lengkap FessBot**
-━━━━━━━━━━━━━━━━━━━━━━━
+**FessBot** otomatis repost foto & video dari channelmu ke channel utama — lebih banyak reach, tanpa effort ekstra.
 
-**Apa itu FessBot?**
-Bot ini meneruskan postingan foto/video dari channel kamu ke channel utama secara otomatis, menjangkau lebih banyak audiens.
+**Setup cepat:**
+`1.` Tambah bot sebagai **Admin** di channelmu
+`2.` Channel langsung terdaftar otomatis
+`3.` Setiap konten di-repost real-time ✅
 
-**Cara Menautkan Channel:**
-1. Jadikan bot ini admin di channel kamu
-   (minimal hak: _Post Messages_ & _Read Messages_)
-2. Channel kamu otomatis terdaftar sebagai **channel partner**
-3. Setiap foto/video yang kamu post akan muncul di channel utama
-
-**Yang Ditampilkan di Repost:**
-• Foto/video asli
-• Caption asli kamu
-• Nama & username channel kamu
-• Tanggal dan jam posting
-• Nama owner (kamu)
-• Tombol link ke postingan asli
-
-**Kontrol Channel:**
-Gunakan tombol **My Channel** di bawah untuk melihat dan mengatur channel-channel kamu yang terdaftar.
-
-━━━━━━━━━━━━━━━━━━━━━━━
-💡 Klik tombol di bawah untuk mulai!
+Buka **My Channel** di bawah untuk mulai. 👇
 """
+
+def owner_keyboard():
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("📊 Dashboard"), KeyboardButton("📋 Channel Partner")],
+            [KeyboardButton("📣 Broadcast"), KeyboardButton("🔧 Tools")],
+        ],
+        resize_keyboard=True
+    )
 
 def main_keyboard():
     return ReplyKeyboardMarkup(
-        [[KeyboardButton("📂 My Channel")]],
+        [[KeyboardButton("📂 My Channel"), KeyboardButton("ℹ️ Info Bot")]],
         resize_keyboard=True
     )
 
@@ -96,36 +63,66 @@ async def start(client: Client, message: Message):
 
     # ── Owner ──────────────────────────────────────────────
     if user_id == OWNER_ID:
-        all_partners = get_all_partners()
         btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Statistik", callback_data="owner_stats")],
-            [InlineKeyboardButton("📋 Daftar Channel Partner", callback_data="list_partner_0")]
+            [
+                InlineKeyboardButton("📊 Dashboard", callback_data="owner_stats"),
+                InlineKeyboardButton("📋 Partner", callback_data="list_partner_0"),
+            ],
+            [
+                InlineKeyboardButton("📣 Broadcast", callback_data="broadcast_menu"),
+                InlineKeyboardButton("🔎 Cari Channel", callback_data="search_channel_prompt"),
+            ],
+            [
+                InlineKeyboardButton("🚫 Blacklist", callback_data="blacklist_menu"),
+                InlineKeyboardButton("🔧 Maintenance", callback_data="maintenance_menu"),
+            ],
         ])
         await message.reply(OWNER_WELCOME, reply_markup=btn)
+        await message.reply("Atau gunakan shortcut keyboard:", reply_markup=owner_keyboard())
+        return
+
+    # ── Cek maintenance ────────────────────────────────────
+    maint = get_maintenance()
+    if maint.get("active"):
+        reason = maint.get("reason", "Sedang maintenance.")
+        await message.reply(
+            f"🔧 **Bot sedang maintenance**\n\n_{reason}_\n\nCoba lagi nanti ya! 🙏"
+        )
         return
 
     # ── Regular user ───────────────────────────────────────
     joined = await check_membership(client, user_id)
-    upsert_user(user_id, {"joined": joined})
+    upsert_user(user_id, {"joined": joined, "last_seen": __import__("datetime").datetime.utcnow()})
 
     if not joined:
         btn = InlineKeyboardMarkup([
             [InlineKeyboardButton("📢 Join Channel Utama", url=f"https://t.me/{MAIN_CHANNEL_USERNAME}")],
-            [InlineKeyboardButton("✅ Sudah Join — Cek Ulang", callback_data="recheck_join")]
+            [InlineKeyboardButton("✅ Udah Join — Cek Ulang", callback_data="recheck_join")]
         ])
-        await message.reply(
-            USER_NOT_JOINED.format(name=user_name),
-            reply_markup=btn
-        )
+        await message.reply(USER_NOT_JOINED.format(name=user_name), reply_markup=btn)
     else:
         from datetime import datetime
         upsert_user(user_id, {"joined": True, "joined_at": datetime.utcnow()})
         btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ Jadikan Bot Admin di Channelku",
+            [InlineKeyboardButton("➕ Tambah Bot sebagai Admin",
              url=f"https://t.me/{BOT_USERNAME}?startchannel=true&admin=post_messages+edit_messages+delete_messages+invite_users")]
         ])
-        await message.reply(
-            USER_JOINED.format(name=user_name),
-            reply_markup=btn
-        )
-        await message.reply("Gunakan tombol di bawah untuk navigasi:", reply_markup=main_keyboard())
+        await message.reply(USER_JOINED.format(name=user_name), reply_markup=btn)
+        await message.reply("Pilih menu:", reply_markup=main_keyboard())
+
+@Client.on_message(filters.text & filters.private & filters.regex("^ℹ️ Info Bot$"))
+async def info_bot(client: Client, message: Message):
+    from db.helpers import count_partners, get_active_partners
+    from db.mongo import posts, users
+    total_p  = count_partners()
+    active_p = len(get_active_partners())
+    total_r  = posts.count_documents({})
+    total_u  = users.count_documents({})
+    await message.reply(
+        f"ℹ️ **FessBot Info**\n\n"
+        f"👥 Users terdaftar  : `{total_u:,}`\n"
+        f"📡 Channel partner  : `{total_p}` (`{active_p}` aktif)\n"
+        f"📦 Total repost     : `{total_r:,}`\n\n"
+        f"🤖 Bot: @{BOT_USERNAME}\n"
+        f"📢 Channel: @{MAIN_CHANNEL_USERNAME}"
+    )

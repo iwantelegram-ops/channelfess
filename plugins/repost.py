@@ -1,48 +1,51 @@
 """
 Auto-repost dari channel partner ke channel utama.
-Deteksi bot dijadikan admin → daftarkan sebagai partner.
-FloodWait ditangani dengan asyncio.sleep otomatis.
+- Deteksi bot jadi admin → daftarkan partner
+- Blacklist kata otomatis
+- Notifikasi ke owner setiap repost
+- Counter total_posts per partner
+- FloodWait handling
 """
 import asyncio
+from datetime import datetime, timezone
 from pyrogram import Client, filters
 from pyrogram.types import (
     Message, ChatMemberUpdated,
     InlineKeyboardMarkup, InlineKeyboardButton
 )
 from pyrogram.enums import ChatMemberStatus, ChatType
-from pyrogram.errors import FloodWait, MessageNotModified, ChatWriteForbidden
+from pyrogram.errors import FloodWait, ChatWriteForbidden
 from config import MAIN_CHANNEL_ID, BOT_USERNAME
 from db.helpers import (
-    get_partner, upsert_partner, save_post, get_post, delete_post
+    get_partner, upsert_partner, save_post, get_post, delete_post,
+    increment_partner_posts, contains_blacklisted, count_posts_by_partner
 )
-from datetime import datetime, timezone
 
 
-def build_caption(original_caption, channel_title, channel_username, owner_name):
+def build_caption(original_caption, channel_title, channel_username, owner_name, post_number):
     now   = datetime.now(timezone.utc)
     date  = now.strftime("%d %b %Y")
     time  = now.strftime("%H:%M UTC")
     uname = f"@{channel_username}" if channel_username else "—"
 
-    return f"""**{channel_title}**  {uname}
-
-{original_caption or ""}
-
-━━━━━━━━━━━━━━━━━━━━
-👤  **Owner**   :  {owner_name}
-📅  **Tanggal** :  {date}
-🕒  **Jam**     :  {time}
-━━━━━━━━━━━━━━━━━━━━
-🔁  [via {BOT_USERNAME}](https://t.me/{BOT_USERNAME}?start=start)""".strip()
+    cap = f"**{channel_title}**  {uname}\n"
+    if original_caption:
+        cap += f"\n{original_caption}\n"
+    cap += (
+        f"\n`───────────────────────`\n"
+        f"👤 {owner_name}  ·  📅 {date}  ·  🕒 {time}\n"
+        f"📦 Repost ke-{post_number} dari channel ini\n"
+        f"`───────────────────────`"
+    )
+    return cap.strip()
 
 
 async def safe_send(coro, retries=3):
-    """Jalankan coroutine Telegram dengan penanganan FloodWait otomatis."""
     for attempt in range(retries):
         try:
             return await coro
         except FloodWait as e:
-            wait = e.value + 2  # tambah buffer 2 detik
+            wait = e.value + 2
             print(f"[FloodWait] Tunggu {wait}s (percobaan {attempt+1}/{retries})")
             await asyncio.sleep(wait)
         except (ChatWriteForbidden, Exception) as e:
@@ -51,7 +54,7 @@ async def safe_send(coro, retries=3):
     return None
 
 
-# ── Deteksi bot dijadikan admin di channel ────────────────
+# ── Deteksi bot dijadikan admin ───────────────────────────
 @Client.on_chat_member_updated(filters.channel)
 async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
     me = await client.get_me()
@@ -75,19 +78,20 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
                 "username":     update.chat.username or "",
                 "paused":       True,
                 "reason":       "Menunggu konfirmasi owner",
-                "added_at":     datetime.utcnow()
+                "added_at":     datetime.utcnow(),
+                "total_posts":  0,
             })
 
             if inviter:
                 await safe_send(client.send_message(
                     owner_id,
-                    f"🎉 **Channel berhasil ditambahkan!**\n\n"
-                    f"📡 **{update.chat.title}** sudah terhubung ke bot.\n\n"
-                    f"Apakah kamu ingin mulai meneruskan postingan dari channel ini ke channel utama?",
+                    f"🎉 **Channel berhasil terhubung!**\n\n"
+                    f"📡 **{update.chat.title}** sudah terdaftar di FessBot.\n\n"
+                    f"Aktifkan agar postinganmu mulai di-repost ke channel utama?",
                     reply_markup=InlineKeyboardMarkup([
                         [
-                            InlineKeyboardButton("✅ Sinkron", callback_data=f"confirm_sync_{channel_id}"),
-                            InlineKeyboardButton("❌ Tidak",   callback_data=f"confirm_nosync_{channel_id}")
+                            InlineKeyboardButton("✅ Aktifkan", callback_data=f"confirm_sync_{channel_id}"),
+                            InlineKeyboardButton("Nanti aja", callback_data=f"confirm_nosync_{channel_id}")
                         ]
                     ])
                 ))
@@ -96,9 +100,19 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
         existing = get_partner(channel_id)
         if existing:
             upsert_partner(channel_id, {"paused": True, "reason": "Bot dicopot dari admin channel"})
+            if oid := existing.get("owner_id"):
+                try:
+                    await client.send_message(
+                        oid,
+                        f"⚠️ **Bot dicopot dari admin channel.**\n\n"
+                        f"📡 **{existing.get('channel_name')}**\n\n"
+                        f"Repost otomatis dihentikan. Tambahkan bot kembali sebagai admin untuk melanjutkan."
+                    )
+                except Exception:
+                    pass
 
 
-# ── Callback konfirmasi sinkron ───────────────────────────
+# ── Konfirmasi sinkron ────────────────────────────────────
 @Client.on_callback_query(filters.regex(r"^confirm_sync_(-?\d+)$"))
 async def cb_confirm_sync(client, cb):
     channel_id = int(cb.matches[0].group(1))
@@ -112,11 +126,11 @@ async def cb_confirm_sync(client, cb):
     ch_name = partner.get("channel_name", str(channel_id))
 
     await safe_send(cb.message.edit_text(
-        f"✅ **Sinkronisasi aktif!**\n\n"
-        f"📡 **{ch_name}** kini meneruskan postingan ke channel utama secara otomatis.\n\n"
-        f"Gunakan tombol **My Channel** untuk mengatur channel kamu kapan saja."
+        f"▶️ **Sinkronisasi aktif!**\n\n"
+        f"📡 **{ch_name}** kini meneruskan postingan ke channel utama. 🚀\n\n"
+        f"Buka **My Channel** untuk ngatur kapan saja."
     ))
-    await cb.answer("Sinkron diaktifkan!")
+    await cb.answer("Aktif!", show_alert=False)
 
 
 @Client.on_callback_query(filters.regex(r"^confirm_nosync_(-?\d+)$"))
@@ -132,29 +146,28 @@ async def cb_confirm_nosync(client, cb):
     upsert_partner(channel_id, {"paused": True, "reason": "Tidak diaktifkan oleh owner"})
 
     await safe_send(cb.message.edit_text(
-        f"⏸ **Sinkronisasi tidak diaktifkan.**\n\n"
-        f"📡 **{ch_name}** terdaftar tapi tidak meneruskan postingan.\n\n"
-        f"Kamu bisa mengaktifkannya kapan saja lewat tombol **My Channel**."
+        f"⏸ **Oke, disimpan dulu.**\n\n"
+        f"📡 **{ch_name}** terdaftar tapi belum aktif.\n"
+        f"Aktifkan lewat **My Channel** kapan saja."
     ))
-    await cb.answer("Oke, bisa diaktifkan nanti.")
+    await cb.answer("Bisa diaktifkan nanti.", show_alert=False)
 
 
-# ── /daftarkan — fallback manual ──────────────────────────
+# ── /daftarkan fallback manual ────────────────────────────
 @Client.on_message(filters.command("daftarkan") & filters.private)
 async def cmd_daftarkan(client: Client, message: Message):
     reply = message.reply_to_message
     if not reply or not reply.forward_from_chat:
         await message.reply(
-            "📋 **Cara mendaftarkan channel secara manual:**\n\n"
-            "1. Buka channel kamu\n"
-            "2. Forward salah satu postingan dari channel kamu ke sini\n"
-            "3. Reply pesan forward itu dengan `/daftarkan`"
+            "📋 **Cara daftarkan channel manual:**\n\n"
+            "`1.` Forward satu postingan dari channelmu ke sini\n"
+            "`2.` Reply pesan forward itu dengan `/daftarkan`"
         )
         return
 
     chat = reply.forward_from_chat
     if chat.type != ChatType.CHANNEL:
-        await message.reply("❌ Pesan yang di-forward harus berasal dari channel.")
+        await message.reply("❌ Harus forward dari channel.")
         return
 
     channel_id = chat.id
@@ -164,14 +177,14 @@ async def cmd_daftarkan(client: Client, message: Message):
         me     = await client.get_me()
         member = await client.get_chat_member(channel_id, me.id)
         if member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
-            await message.reply(f"❌ Bot belum dijadikan admin di **{chat.title}**.")
+            await message.reply(f"❌ Bot belum jadi admin di **{chat.title}**.")
             return
     except FloodWait as e:
         await asyncio.sleep(e.value + 2)
-        await message.reply("⚠️ Terkena rate limit, coba lagi sebentar.")
+        await message.reply("⚠️ Rate limit, coba lagi sebentar.")
         return
     except Exception as e:
-        await message.reply(f"❌ Bot tidak bisa mengakses channel ini.\n`{e}`")
+        await message.reply(f"❌ Tidak bisa akses channel.\n`{e}`")
         return
 
     try:
@@ -180,7 +193,7 @@ async def cmd_daftarkan(client: Client, message: Message):
             await message.reply("❌ Kamu harus admin channel tersebut.")
             return
     except Exception:
-        await message.reply("❌ Tidak bisa memverifikasi status kamu di channel tersebut.")
+        await message.reply("❌ Tidak bisa verifikasi status kamu.")
         return
 
     upsert_partner(channel_id, {
@@ -190,23 +203,22 @@ async def cmd_daftarkan(client: Client, message: Message):
         "username":     chat.username or "",
         "paused":       True,
         "reason":       "Menunggu konfirmasi owner",
-        "added_at":     datetime.utcnow()
+        "added_at":     datetime.utcnow(),
+        "total_posts":  0,
     })
 
     await message.reply(
-        f"🎉 **Channel berhasil ditambahkan!**\n\n"
-        f"📡 **{chat.title}** sudah terhubung ke bot.\n\n"
-        f"Apakah kamu ingin mulai meneruskan postingan ke channel utama?",
+        f"🎉 **Channel terdaftar!**\n\n📡 **{chat.title}**\n\nAktifkan sekarang?",
         reply_markup=InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Sinkron", callback_data=f"confirm_sync_{channel_id}"),
-                InlineKeyboardButton("❌ Tidak",   callback_data=f"confirm_nosync_{channel_id}")
+                InlineKeyboardButton("✅ Aktifkan", callback_data=f"confirm_sync_{channel_id}"),
+                InlineKeyboardButton("Nanti aja", callback_data=f"confirm_nosync_{channel_id}")
             ]
         ])
     )
 
 
-# ── Repost foto/video dari channel partner ────────────────
+# ── REPOST ────────────────────────────────────────────────
 @Client.on_message(filters.channel & (filters.photo | filters.video))
 async def repost(client: Client, message: Message):
     channel_id = message.chat.id
@@ -215,11 +227,33 @@ async def repost(client: Client, message: Message):
     if not partner or partner.get("paused"):
         return
 
-    caption = build_caption(
-        original_caption = message.caption or "",
+    # Cek blacklist
+    caption_text = message.caption or ""
+    matched_word = contains_blacklisted(caption_text)
+    if matched_word:
+        owner_id = partner.get("owner_id")
+        ch_name  = partner.get("channel_name", str(channel_id))
+        if owner_id:
+            try:
+                await client.send_message(
+                    owner_id,
+                    f"🚫 **Postingan ditolak — blacklist**\n\n"
+                    f"📡 **{ch_name}**\n"
+                    f"⚠️ Kata terlarang ditemukan: `{matched_word}`\n\n"
+                    f"Postingan ini tidak diteruskan ke channel utama."
+                )
+            except Exception:
+                pass
+        return
+
+    post_number = count_posts_by_partner(channel_id) + 1
+
+    cap = build_caption(
+        original_caption = caption_text,
         channel_title    = partner.get("channel_name", message.chat.title),
         channel_username = partner.get("username", ""),
         owner_name       = partner.get("owner_name", "Unknown"),
+        post_number      = post_number,
     )
 
     uname = partner.get("username", "")
@@ -230,15 +264,32 @@ async def repost(client: Client, message: Message):
         original_url = f"https://t.me/c/{cid_str}/{message.id}"
 
     btn = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔗 Lihat Postingan Asli", url=original_url)]
+        [InlineKeyboardButton("🔗 Lihat Post Asli", url=original_url)]
     ])
 
-    sent = await safe_send(message.copy(MAIN_CHANNEL_ID, caption=caption, reply_markup=btn))
+    sent = await safe_send(message.copy(MAIN_CHANNEL_ID, caption=cap, reply_markup=btn))
     if sent:
         save_post(channel_id, message.id, sent.id)
+        increment_partner_posts(channel_id)
+
+        # Notifikasi ke owner channel
+        owner_id = partner.get("owner_id")
+        ch_name  = partner.get("channel_name", str(channel_id))
+        if owner_id:
+            try:
+                await client.send_message(
+                    owner_id,
+                    f"✅ **Postingan berhasil di-repost!**\n\n"
+                    f"📡 **{ch_name}**\n"
+                    f"📦 Repost ke-{post_number}\n"
+                    f"🔗 [Lihat di channel utama](https://t.me/c/{str(MAIN_CHANNEL_ID).replace('-100','')}/{sent.id})",
+                    disable_web_page_preview=True
+                )
+            except Exception:
+                pass
 
 
-# ── Hapus repost jika postingan asli dihapus ──────────────
+# ── Hapus repost jika asli dihapus ───────────────────────
 @Client.on_deleted_messages(filters.channel)
 async def delete_repost(client: Client, messages):
     for msg in messages:
