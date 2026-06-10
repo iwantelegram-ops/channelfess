@@ -14,7 +14,10 @@ GUARDED_COMMANDS = [
     "addbl", "rmbl", "listbl"
 ]
 
-@Client.on_message(filters.command(GUARDED_COMMANDS) & filters.private)
+# BUG FIX: tambahkan group=0 secara eksplisit (default Pyrogram)
+# agar guard dieksekusi LEBIH DULU dari start handler (group=1)
+# Ini mencegah guard menangkap /start secara tidak sengaja
+@Client.on_message(filters.command(GUARDED_COMMANDS) & filters.private, group=0)
 async def guard_maintenance(client: Client, message: Message):
     if message.from_user.id == OWNER_ID:
         return  # Owner selalu bisa akses

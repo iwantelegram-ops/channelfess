@@ -22,20 +22,27 @@ from db.helpers import (
 )
 
 
-def build_caption(original_caption, channel_title, channel_username, owner_name, post_number):
-    now   = datetime.now(timezone.utc)
-    date  = now.strftime("%d %b %Y")
-    time  = now.strftime("%H:%M UTC")
-    uname = f"@{channel_username}" if channel_username else "—"
+def build_caption(original_caption, channel_title, channel_username, owner_name, post_number, bot_username):
+    now  = datetime.now(timezone.utc)
+    date = now.strftime("%d %b %Y")
+    time = now.strftime("%H:%M UTC")
 
-    cap = f"**{channel_title}**  {uname}\n"
+    # Nama channel — pakai link jika ada username
+    if channel_username:
+        ch_link = f"[{channel_title}](https://t.me/{channel_username})"
+    else:
+        ch_link = f"**{channel_title}**"
+
+    cap = f"{ch_link}\n"
     if original_caption:
         cap += f"\n{original_caption}\n"
     cap += (
-        f"\n`───────────────────────`\n"
-        f"👤 {owner_name}  ·  📅 {date}  ·  🕒 {time}\n"
-        f"📦 Repost ke-{post_number} dari channel ini\n"
-        f"`───────────────────────`"
+        f"\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤  Owner   :  {owner_name}\n"
+        f"📅  Tanggal :  {date}\n"
+        f"🕒  Jam     :  {time}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔁  via [@{bot_username}](https://t.me/{bot_username}?start=start)"
     )
     return cap.strip()
 
@@ -254,6 +261,7 @@ async def repost(client: Client, message: Message):
         channel_username = partner.get("username", ""),
         owner_name       = partner.get("owner_name", "Unknown"),
         post_number      = post_number,
+        bot_username     = BOT_USERNAME,
     )
 
     uname = partner.get("username", "")

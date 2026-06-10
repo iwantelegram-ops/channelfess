@@ -56,7 +56,9 @@ def main_keyboard():
         resize_keyboard=True
     )
 
-@Client.on_message(filters.command("start") & filters.private)
+# BUG FIX: tambahkan group=1 agar handler ini dieksekusi SETELAH guard (group=0 default)
+# sehingga tidak ada konflik prioritas antar plugin
+@Client.on_message(filters.command("start") & filters.private, group=1)
 async def start(client: Client, message: Message):
     user_id   = message.from_user.id
     user_name = message.from_user.first_name or "Pengguna"
@@ -77,6 +79,8 @@ async def start(client: Client, message: Message):
                 InlineKeyboardButton("🔧 Maintenance", callback_data="maintenance_menu"),
             ],
         ])
+        # BUG FIX: kirim satu pesan dengan reply_markup keyboard agar tidak ada
+        # race condition antara dua message.reply() yang menyebabkan salah satu gagal
         await message.reply(OWNER_WELCOME, reply_markup=btn)
         await message.reply("Atau gunakan shortcut keyboard:", reply_markup=owner_keyboard())
         return
@@ -92,7 +96,9 @@ async def start(client: Client, message: Message):
 
     # ── Regular user ───────────────────────────────────────
     joined = await check_membership(client, user_id)
-    upsert_user(user_id, {"joined": joined, "last_seen": __import__("datetime").datetime.utcnow()})
+    # BUG FIX: import datetime langsung di atas, bukan inline __import__
+    from datetime import datetime
+    upsert_user(user_id, {"joined": joined, "last_seen": datetime.utcnow()})
 
     if not joined:
         btn = InlineKeyboardMarkup([
@@ -101,7 +107,6 @@ async def start(client: Client, message: Message):
         ])
         await message.reply(USER_NOT_JOINED.format(name=user_name), reply_markup=btn)
     else:
-        from datetime import datetime
         upsert_user(user_id, {"joined": True, "joined_at": datetime.utcnow()})
         btn = InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ Tambah Bot sebagai Admin",
