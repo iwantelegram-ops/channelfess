@@ -34,7 +34,7 @@ def build_caption(original_caption, channel_title, channel_username, owner_name,
 🔁  _via FessBot_""".strip()
 
 
-# ── Deteksi bot dijadikan/dicopot admin di channel ────────
+# ── Deteksi bot dijadikan admin di channel ────────────────
 @Client.on_chat_member_updated(filters.channel)
 async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
     me = await client.get_me()
@@ -51,13 +51,14 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
             owner_id   = inviter.id if inviter else 0
             owner_name = inviter.first_name if inviter else "Unknown"
 
+            # Simpan dulu dengan paused=True, tunggu konfirmasi user
             upsert_partner(channel_id, {
                 "owner_id":     owner_id,
                 "owner_name":   owner_name,
                 "channel_name": update.chat.title,
                 "username":     update.chat.username or "",
-                "paused":       False,
-                "reason":       "",
+                "paused":       True,
+                "reason":       "Menunggu konfirmasi owner",
                 "added_at":     datetime.utcnow()
             })
 
@@ -65,10 +66,15 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
                 try:
                     await client.send_message(
                         owner_id,
-                        f"✅ **Channel terdaftar sebagai partner!**\n\n"
-                        f"📡 **{update.chat.title}** kini terhubung ke channel utama.\n"
-                        f"Setiap foto/video yang kamu post akan diteruskan otomatis.\n\n"
-                        f"Gunakan tombol **My Channel** di menu bot untuk mengatur channel kamu."
+                        f"🎉 **Channel berhasil ditambahkan!**\n\n"
+                        f"📡 **{update.chat.title}** sudah terhubung ke bot.\n\n"
+                        f"Apakah kamu ingin mulai meneruskan postingan dari channel ini ke channel utama?",
+                        reply_markup=InlineKeyboardMarkup([
+                            [
+                                InlineKeyboardButton("✅ Sinkron", callback_data=f"confirm_sync_{channel_id}"),
+                                InlineKeyboardButton("❌ Tidak", callback_data=f"confirm_nosync_{channel_id}")
+                            ]
+                        ])
                     )
                 except Exception:
                     pass
@@ -79,79 +85,107 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
             upsert_partner(channel_id, {"paused": True, "reason": "Bot dicopot dari admin channel"})
 
 
-# ── /daftarkan — fallback manual jika event tidak tertangkap ──
+# ── Callback konfirmasi sinkron ───────────────────────────
+@Client.on_callback_query(filters.regex(r"^confirm_sync_(-?\d+)$"))
+async def cb_confirm_sync(client, cb):
+    channel_id = int(cb.matches[0].group(1))
+    partner    = get_partner(channel_id)
+
+    if not partner or partner.get("owner_id") != cb.from_user.id:
+        await cb.answer("Channel tidak ditemukan.", show_alert=True)
+        return
+
+    upsert_partner(channel_id, {"paused": False, "reason": ""})
+    ch_name = partner.get("channel_name", str(channel_id))
+
+    await cb.message.edit_text(
+        f"✅ **Sinkronisasi aktif!**\n\n"
+        f"📡 **{ch_name}** kini meneruskan postingan ke channel utama secara otomatis.\n\n"
+        f"Gunakan tombol **My Channel** untuk mengatur channel kamu kapan saja."
+    )
+    await cb.answer("Sinkron diaktifkan!", show_alert=False)
+
+
+@Client.on_callback_query(filters.regex(r"^confirm_nosync_(-?\d+)$"))
+async def cb_confirm_nosync(client, cb):
+    channel_id = int(cb.matches[0].group(1))
+    partner    = get_partner(channel_id)
+
+    if not partner or partner.get("owner_id") != cb.from_user.id:
+        await cb.answer("Channel tidak ditemukan.", show_alert=True)
+        return
+
+    ch_name = partner.get("channel_name", str(channel_id))
+    upsert_partner(channel_id, {"paused": True, "reason": "Tidak diaktifkan oleh owner"})
+
+    await cb.message.edit_text(
+        f"⏸ **Sinkronisasi tidak diaktifkan.**\n\n"
+        f"📡 **{ch_name}** terdaftar tapi tidak meneruskan postingan.\n\n"
+        f"Kamu bisa mengaktifkannya kapan saja lewat tombol **My Channel**."
+    )
+    await cb.answer("Oke, bisa diaktifkan nanti.", show_alert=False)
+
+
+# ── /daftarkan — fallback manual ──────────────────────────
 @Client.on_message(filters.command("daftarkan") & filters.private)
 async def cmd_daftarkan(client: Client, message: Message):
-    """
-    User forward pesan dari channelnya, bot akan cek apakah
-    bot sudah jadi admin di channel tersebut, lalu daftarkan.
-
-    Cara pakai: forward sembarang pesan dari channel kamu ke bot,
-    lalu ketik /daftarkan
-    """
-    # Cek apakah user mereply sebuah forward dari channel
     reply = message.reply_to_message
     if not reply or not reply.forward_from_chat:
         await message.reply(
-            "📋 **Cara mendaftarkan channel:**\n\n"
+            "📋 **Cara mendaftarkan channel secara manual:**\n\n"
             "1. Buka channel kamu\n"
-            "2. Forward (teruskan) salah satu postingan dari channel kamu ke chat ini\n"
-            "3. Reply pesan forward itu dengan `/daftarkan`\n\n"
-            "Bot akan otomatis mengecek dan mendaftarkan channel kamu."
+            "2. Forward salah satu postingan dari channel kamu ke sini\n"
+            "3. Reply pesan forward itu dengan `/daftarkan`"
         )
         return
 
     chat = reply.forward_from_chat
     if chat.type != ChatType.CHANNEL:
-        await message.reply("❌ Pesan yang di-forward harus berasal dari channel, bukan grup.")
+        await message.reply("❌ Pesan yang di-forward harus berasal dari channel.")
         return
 
     channel_id = chat.id
     user_id    = message.from_user.id
 
-    # Verifikasi bot sudah jadi admin di channel tersebut
     try:
-        me      = await client.get_me()
-        member  = await client.get_chat_member(channel_id, me.id)
+        me     = await client.get_me()
+        member = await client.get_chat_member(channel_id, me.id)
         if member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
-            await message.reply(
-                f"❌ Bot belum dijadikan **admin** di channel **{chat.title}**.\n\n"
-                f"Jadikan bot admin dulu, lalu ulangi langkah ini."
-            )
+            await message.reply(f"❌ Bot belum dijadikan admin di **{chat.title}**.")
             return
     except Exception as e:
-        await message.reply(
-            f"❌ Bot tidak bisa mengakses channel **{chat.title}**.\n"
-            f"Pastikan bot sudah dijadikan admin.\n\nError: `{e}`"
-        )
+        await message.reply(f"❌ Bot tidak bisa mengakses channel ini.\n`{e}`")
         return
 
-    # Verifikasi user adalah admin/owner channel tersebut
     try:
         user_member = await client.get_chat_member(channel_id, user_id)
         if user_member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
-            await message.reply("❌ Kamu harus menjadi admin channel tersebut untuk mendaftarkannya.")
+            await message.reply("❌ Kamu harus admin channel tersebut.")
             return
     except Exception:
         await message.reply("❌ Tidak bisa memverifikasi status kamu di channel tersebut.")
         return
 
-    # Daftarkan
     upsert_partner(channel_id, {
         "owner_id":     user_id,
         "owner_name":   message.from_user.first_name or "Unknown",
         "channel_name": chat.title,
         "username":     chat.username or "",
-        "paused":       False,
-        "reason":       "",
+        "paused":       True,
+        "reason":       "Menunggu konfirmasi owner",
         "added_at":     datetime.utcnow()
     })
 
     await message.reply(
-        f"✅ **Channel berhasil didaftarkan!**\n\n"
-        f"📡 **{chat.title}** kini terhubung ke channel utama.\n"
-        f"Setiap foto/video yang kamu post akan diteruskan otomatis.\n\n"
-        f"Gunakan tombol **My Channel** untuk mengatur channel kamu."
+        f"🎉 **Channel berhasil ditambahkan!**\n\n"
+        f"📡 **{chat.title}** sudah terhubung ke bot.\n\n"
+        f"Apakah kamu ingin mulai meneruskan postingan ke channel utama?",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Sinkron", callback_data=f"confirm_sync_{channel_id}"),
+                InlineKeyboardButton("❌ Tidak", callback_data=f"confirm_nosync_{channel_id}")
+            ]
+        ])
     )
 
 
