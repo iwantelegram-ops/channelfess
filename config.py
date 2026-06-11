@@ -3,11 +3,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_ID               = int(os.getenv("API_ID"))
-API_HASH             = os.getenv("API_HASH")
-BOT_TOKEN            = os.getenv("BOT_TOKEN")
-MONGO_URI            = os.getenv("MONGO_URI")
-MAIN_CHANNEL_ID      = int(os.getenv("MAIN_CHANNEL_ID"))
-MAIN_CHANNEL_USERNAME = os.getenv("MAIN_CHANNEL_USERNAME")
-OWNER_ID             = int(os.getenv("OWNER_ID"))
-BOT_USERNAME         = os.getenv("BOT_USERNAME")
+API_ID                = int(os.getenv("API_ID", "0"))
+API_HASH              = os.getenv("API_HASH", "")
+BOT_TOKEN             = os.getenv("BOT_TOKEN", "")
+MONGO_URI             = os.getenv("MONGO_URI", "")
+MAIN_CHANNEL_ID       = int(os.getenv("MAIN_CHANNEL_ID", "0"))
+MAIN_CHANNEL_USERNAME = os.getenv("MAIN_CHANNEL_USERNAME", "")
+OWNER_ID              = int(os.getenv("OWNER_ID", "0"))
+BOT_USERNAME          = os.getenv("BOT_USERNAME", "")
+
+# Flood control
+FLOOD_SLEEP_THRESHOLD = 60   # detik — jika FloodWait > angka ini, skip
+BROADCAST_DELAY       = 0.05 # detik antar pengiriman broadcast
