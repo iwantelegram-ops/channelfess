@@ -12,22 +12,23 @@ logging.basicConfig(
 )
 log = logging.getLogger("fessbot")
 
-
-# Session disimpan di MongoDB — persisten di semua device/HP
-_storage = MongoStorage(
-    name               = "fessbot_session",
-    collection_session = sessions_col,
-    collection_peers   = peers_col,
-)
+SESSION_NAME = "fessbot_session"
 
 app = Client(
-    _storage,
+    SESSION_NAME,
     api_id   = API_ID,
     api_hash = API_HASH,
     bot_token= BOT_TOKEN,
     plugins  = dict(root="plugins"),
 )
 
+# Ganti FileStorage bawaan Pyrogram dengan MongoStorage
+# sebelum app.run() agar sesi disimpan di MongoDB, bukan file .session
+app.storage = MongoStorage(
+    name               = SESSION_NAME,
+    collection_session = sessions_col,
+    collection_peers   = peers_col,
+)
 
 if __name__ == "__main__":
     log.info("🤖 FessBot v2 starting...")
