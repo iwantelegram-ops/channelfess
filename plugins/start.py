@@ -173,64 +173,47 @@ async def info_bot(client: Client, message: Message):
 #  📖 Tutorial
 # ═══════════════════════════════════════════════════════════
 
-TUTORIAL_TEXT = (
-    "📖 <b>Tutorial Penggunaan {bot_name}</b>\n"
-    "<code>{'─' * 28}</code>\n\n"
-
-    "1️⃣ <b>Daftarkan Channel</b>\n"
-    "   • Buka pengaturan channelmu\n"
-    "   • Pilih <b>Administrator → Tambah Admin</b>\n"
-    "   • Cari <b>@{bot_username}</b>\n"
-    "   • Aktifkan izin:\n"
-    "     ✅ Kirim Pesan\n"
-    "     ✅ Edit Pesan\n"
-    "     ✅ Hapus Pesan\n"
-    "   • Simpan → channel <b>otomatis terdaftar</b> ✅\n\n"
-
-    "2️⃣ <b>Aktifkan / Pause Repost</b>\n"
-    "   • Ketuk <b>📂 My Channel</b> di menu\n"
-    "   • Pilih channel → ketuk <b>▶️ Aktifkan</b> atau <b>⏸ Pause</b>\n\n"
-
-    "3️⃣ <b>Hapus Repost di Channel Utama (Sinkron)</b>\n"
-    "   • Hapus postingan di <b>channelmu sendiri</b>\n"
-    "   • Bot otomatis menghapus repost-nya di channel utama\n"
-    "   • <b>Syarat agar sinkron bekerja:</b>\n"
-    "     ✅ Bot masih jadi Admin di channelmu\n"
-    "     ✅ Izin <b>Hapus Pesan</b> aktif\n"
-    "     ✅ Fitur <b>Auto-Hapus Repost</b> diaktifkan owner\n"
-    "   • ⚠️ Penghapusan terdeteksi saat ada postingan baru\n"
-    "     berikutnya dari channelmu\n\n"
-
-    "4️⃣ <b>Notifikasi</b>\n"
-    "   • Ketuk <b>🔔 Notifikasi</b> di menu\n"
-    "   • Atur notif repost, blacklist, dan status channel\n\n"
-
-    "5️⃣ <b>Repost tidak muncul?</b>\n"
-    "   • Cek status channel → harus <b>Aktif ▶️</b>\n"
-    "   • Pastikan bot masih jadi <b>Admin</b>\n"
-    "   • Konten harus berupa <b>foto atau video</b>\n"
-    "   • Periksa apakah ada kata terlarang (blacklist)\n\n"
-
-    "<code>{'─' * 28}</code>\n"
-    "📬 Butuh bantuan? Hubungi @{owner_username}"
-)
-
-
 @Client.on_callback_query(filters.regex(r"^tutorial$"))
 async def cb_tutorial(client: Client, cb: CallbackQuery):
     try:
-        text = TUTORIAL_TEXT.format(
-            bot_name=BOT_NAME,
-            bot_username=BOT_USERNAME,
-            owner_username=OWNER_USERNAME or BOT_USERNAME,
+        text = (
+            f"📖 <b>Tutorial {BOT_NAME}</b>\n"
+            f"<code>{'─' * 28}</code>\n\n"
+            f"1️⃣ <b>Daftarkan Channel</b>\n"
+            f"• Buka pengaturan channel → <b>Administrator → Tambah Admin</b>\n"
+            f"• Cari <b>@{BOT_USERNAME}</b>, aktifkan izin:\n"
+            f"  ✅ Kirim · Edit · Hapus Pesan\n"
+            f"• Simpan → channel <b>otomatis terdaftar</b> ✅\n\n"
+            f"2️⃣ <b>Aktifkan / Pause Repost</b>\n"
+            f"• <b>📂 My Channel</b> → pilih channel\n"
+            f"• Ketuk <b>▶️ Aktifkan</b> atau <b>⏸ Pause</b>\n\n"
+            f"3️⃣ <b>Hapus Repost Sinkron</b>\n"
+            f"• Hapus postingan di <b>channelmu sendiri</b>\n"
+            f"• Bot otomatis hapus repost di channel utama\n"
+            f"• Syarat sinkron berjalan:\n"
+            f"  ✅ Bot masih Admin di channelmu\n"
+            f"  ✅ Izin <b>Hapus Pesan</b> aktif\n"
+            f"  ✅ Fitur Auto-Hapus diaktifkan owner\n"
+            f"  ⚠️ Deteksi terjadi saat ada postingan baru berikutnya\n\n"
+            f"4️⃣ <b>Notifikasi</b>\n"
+            f"• <b>🔔 Notifikasi</b> → atur notif repost, blacklist, status\n\n"
+            f"5️⃣ <b>Repost tidak muncul?</b>\n"
+            f"• Status channel harus <b>Aktif ▶️</b>\n"
+            f"• Bot harus masih jadi <b>Admin</b>\n"
+            f"• Konten harus berupa <b>foto atau video</b>\n"
+            f"• Periksa kata terlarang (blacklist)\n\n"
+            f"<code>{'─' * 28}</code>\n"
+            f"📬 Bantuan: @{OWNER_USERNAME or BOT_USERNAME}"
         )
         markup = InlineKeyboardMarkup([[
-            InlineKeyboardButton("➕ Tambah Bot ke Channel",
+            InlineKeyboardButton(
+                "➕ Tambah Bot ke Channel",
                 url=(f"https://t.me/{BOT_USERNAME}?startchannel=true"
-                     f"&admin=post_messages+edit_messages+delete_messages+invite_users")),
+                     f"&admin=post_messages+edit_messages+delete_messages+invite_users"),
+            )
         ]])
-        await cb.message.edit_text(text, reply_markup=markup, parse_mode=PM)
+        await safe_edit(cb.message, text, markup=markup, parse_mode=PM)
     except Exception as e:
         log.error(f"[cb_tutorial] {e}")
     finally:
-        await cb.answer()
+        await answer_cb(cb)
