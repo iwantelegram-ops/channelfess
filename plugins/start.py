@@ -46,6 +46,18 @@ def not_joined_inline(channel_username: str):
                               callback_data="recheck_join")],
     ])
 
+def setup_admin_inline():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "➕ Jadikan Bot Admin di Channel",
+            url=(
+                f"https://t.me/{BOT_USERNAME}"
+                f"?startchannel=true"
+                f"&admin=post_messages+edit_messages+delete_messages+invite_users"
+            ),
+        )],
+    ])
+
 # ═══════════════════════════════════════════════════════════
 #  /start HANDLER
 # ═══════════════════════════════════════════════════════════
@@ -115,8 +127,21 @@ async def start(client: Client, message: Message):
         f"1️⃣  Tambahkan bot sebagai <b>Admin</b> di channelmu\n"
         f"2️⃣  Channel otomatis terdaftar\n"
         f"3️⃣  Konten di-repost real-time ✅\n\n"
-        f"Buka <b>My Channel</b> untuk mulai. 👇",
-        reply_markup=user_keyboard(),
+        f"<b>📋 Syarat agar bot bisa bekerja:</b>\n"
+        f"Bot <b>wajib</b> dijadikan admin di channelmu dengan minimal izin berikut:\n\n"
+        f"• 📝 <b>Post Messages</b> — agar bot bisa mengirim/repost konten ke channel\n"
+        f"• ✏️ <b>Edit Messages</b> — agar bot bisa mengedit pesan yang sudah dikirim\n"
+        f"• 🗑️ <b>Delete Messages</b> — agar bot bisa menghapus konten yang dilaporkan/dihapus\n"
+        f"• ➕ <b>Invite Users via Link</b> — agar bot bisa mengelola akses member channel\n\n"
+        f"Tanpa izin di atas, bot <b>tidak akan berfungsi</b> dengan baik di channelmu.\n\n"
+        f"Tekan tombol di bawah untuk langsung menambahkan bot sebagai admin "
+        f"dengan izin yang sudah diatur otomatis. 👇",
+        reply_markup=setup_admin_inline(),
         parse_mode=PM,
     )
     store_msg(user_id, msg)
+    msg2 = await message.reply(
+        "Atau buka menu di bawah untuk fitur lainnya. 👇",
+        reply_markup=user_keyboard(),
+    )
+    store_msg(user_id, msg2)
