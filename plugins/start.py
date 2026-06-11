@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from pyrogram import Client, filters
 from pyrogram.types import (
-    Message, InlineKeyboardMarkup, InlineKeyboardButton,
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton,
 )
 from pyrogram.enums import ParseMode
@@ -277,10 +277,10 @@ def _bantuan_markup(page: int, total: int):
 
 
 @Client.on_callback_query(filters.regex(r"^bantuan_page_(\d+)$"))
-async def cb_bantuan_page(client: Client, cb):
+async def cb_bantuan_page(client: Client, cb: CallbackQuery):
     log.info(f"[cb_bantuan_page] dipanggil oleh user={cb.from_user.id} page={cb.data}")
     try:
-        page   = int(cb.matches[0].group(1))
+        page   = int(cb.data.split("_")[-1])
         pages  = _bantuan_pages(BOT_USERNAME)
         total  = len(pages)
         page   = max(0, min(page, total - 1))
