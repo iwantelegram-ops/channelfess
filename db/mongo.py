@@ -41,7 +41,7 @@ def ensure_indexes():
     partners.create_index([("paused", 1)])
 
 
-#try:
-  #  ensure_indexes()
-#except Exception:
-  #  pass
+try:
+    ensure_indexes()
+except Exception:
+    pass
