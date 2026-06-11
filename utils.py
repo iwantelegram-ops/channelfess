@@ -61,11 +61,11 @@ async def safe_send(coro, retries: int = 5):
 
 
 # ═══════════════════════════════════════════════════════════
-#  SAFE EDIT  — tidak pernah crash
+#  SAFE EDIT  — digunakan HANYA untuk inline keyboard callbacks
 # ═══════════════════════════════════════════════════════════
 
 async def safe_edit(msg, text: str, markup=None, parse_mode=None):
-    """Edit pesan; return edited message atau None kalau gagal."""
+    """Edit pesan inline; return edited message atau None kalau gagal."""
     if msg is None:
         return None
     try:
@@ -96,8 +96,15 @@ async def answer_cb(cb, text: str = "", show_alert: bool = False):
 
 
 # ═══════════════════════════════════════════════════════════
-#  NAV HELPER — edit pesan lama, bukan kirim baru
+#  NAV HELPER — SELALU kirim pesan baru (tidak pernah edit)
 # ═══════════════════════════════════════════════════════════
+#
+# Alasan: edit bergantung pada ID pesan lama yang mungkin sudah
+# tidak ada, dihapus user, atau tidak diketahui bot. Akibatnya
+# tombol tidak merespon sama sekali. Solusi: selalu reply/send baru.
+#
+# store_msg / get_stored_msg tetap ada untuk kompatibilitas backward,
+# tapi tidak lagi dipakai untuk menentukan alur navigasi.
 
 _last_bot_msg: dict[int, Message] = {}
 
@@ -114,21 +121,11 @@ def get_stored_msg(user_id: int):
 async def nav_to(client, user_id: int, chat_id: int, text: str,
                  inline_markup=None, reply_markup=None, parse_mode=None):
     """
-    Navigasi ke halaman baru:
-    1. Coba edit pesan terakhir yang disimpan
-    2. Jika gagal → kirim pesan baru
+    Kirim pesan baru ke chat_id.
+    Jika inline_markup ada, pakai inline_markup.
+    Jika reply_markup ada, pakai reply_markup.
+    Return pesan yang dikirim, atau None bila gagal.
     """
-    prev   = _last_bot_msg.get(user_id)
-    edited = None
-
-    if prev:
-        edited = await safe_edit(prev, text, markup=inline_markup, parse_mode=parse_mode)
-
-    if edited:
-        store_msg(user_id, edited)
-        return edited
-
-    # Fallback: kirim pesan baru
     try:
         kwargs = {}
         if inline_markup:
@@ -140,6 +137,9 @@ async def nav_to(client, user_id: int, chat_id: int, text: str,
         msg = await client.send_message(chat_id, text, **kwargs)
         store_msg(user_id, msg)
         return msg
+    except FloodWait as e:
+        await asyncio.sleep(min(e.value + 1, FLOOD_SLEEP_THRESHOLD))
+        return None
     except Exception as e:
         log.error(f"[nav_to] gagal kirim: {e}")
         return None
