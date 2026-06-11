@@ -142,16 +142,14 @@ async def _show(client, message: Message, text: str,
     # Tentukan markup: reply_kb lebih prioritas untuk navigasi utama,
     # inline_markup dipakai bila tidak ada reply_kb
     markup = reply_kb if reply_kb else inline_markup
-    # Bila keduanya ada: kirim konten dengan inline_markup,
-    # lalu kirim pesan singkat dengan reply keyboard (tanpa teks "⬇️" yang berisik)
+    # Bila keduanya ada, kirim dua pesan: satu inline + satu reply kb
     if reply_kb and inline_markup:
         msg = await nav_to(client, uid, message.chat.id, text,
                            inline_markup=inline_markup, parse_mode=PM)
         if not msg:
             msg = await message.reply(text, reply_markup=inline_markup, parse_mode=PM)
             store_msg(uid, msg)
-        # FIX: kirim pesan dengan reply_kb tapi tanpa teks noise "⬇️"
-        await client.send_message(message.chat.id, "‌", reply_markup=reply_kb)
+        await client.send_message(message.chat.id, "⬇️", reply_markup=reply_kb)
     else:
         msg = await nav_to(client, uid, message.chat.id, text,
                            inline_markup=inline_markup,

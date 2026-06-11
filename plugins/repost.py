@@ -35,26 +35,6 @@ PM  = ParseMode.MARKDOWN
 
 
 # ═══════════════════════════════════════════════════════════
-#  TASK HELPERS — safe background tasks
-# ═══════════════════════════════════════════════════════════
-
-async def _safe_task(coro):
-    """Wrapper coroutine agar unhandled exception di background task tidak crash bot."""
-    try:
-        await coro
-    except Exception as e:
-        log.error(f"[bg_task] Unhandled exception: {e}")
-
-
-def _ensure_bg_task(coro):
-    """Buat background task dengan error handler."""
-    import asyncio as _asyncio
-    task = _asyncio.ensure_future(_safe_task(coro))
-    return task
-
-
-
-# ═══════════════════════════════════════════════════════════
 #  CAPTION BUILDER — JANGAN DIUBAH (sesuai permintaan owner)
 # ═══════════════════════════════════════════════════════════
 
@@ -141,7 +121,7 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
 
     channel_id = update.chat.id
     new_status = update.new_chat_member.status
-    old_status = update.old_chat_member.status if update.old_chat_member else ChatMemberStatus.LEFT
+    old_status = update.old_chat_member.status if update.old_chat_member else None
 
     if new_status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
         if old_status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
@@ -386,11 +366,6 @@ async def repost(client: Client, message: Message):
         log_activity("blacklist_blocked", channel_id, {"word": matched_word})
         return
 
-    # FIX: Guard duplikasi — jika post ini sudah pernah di-repost, skip
-    if get_post(channel_id, message.id):
-        log.debug(f"[repost] Skip duplikat dari {channel_id} msg {message.id}")
-        return
-
     post_number = count_posts_by_partner(channel_id) + 1
 
     # Ambil info bot dari sistem (bukan dari env)
@@ -485,7 +460,7 @@ async def repost(client: Client, message: Message):
         log_activity("repost_success", channel_id, {"main_msg_id": sent.id})
 
         # Lazy check: setiap ada post baru, sekalian cek post lama channel ini
-        asyncio.ensure_future(_safe_task(_lazy_check_channel(client, channel_id)))
+        asyncio.create_task(_lazy_check_channel(client, channel_id))
 
         owner_id = partner.get("owner_id")
         if owner_id:
@@ -651,5 +626,5 @@ async def _schedule_midnight_owner_sync(client: Client):
 
 async def start_owner_name_scheduler(client: Client):
     """Dipanggil sekali saat bot start dari main.py."""
-    _ensure_bg_task(_schedule_midnight_owner_sync(client))
+    asyncio.create_task(_schedule_midnight_owner_sync(client))
     log.info("[owner_name_sync] Scheduler diaktifkan.")
