@@ -83,6 +83,31 @@ async def answer_cb(cb, text: str = "", show_alert: bool = False):
         pass
 
 
+async def nav_to(client, user_id: int, chat_id: int, text: str,
+                 inline_markup=None, reply_markup=None, parse_mode=None):
+    """
+    Alias lama — kirim pesan baru ke chat_id.
+    Dipertahankan untuk kompatibilitas mundur.
+    """
+    try:
+        kwargs = {}
+        if inline_markup:
+            kwargs["reply_markup"] = inline_markup
+        elif reply_markup:
+            kwargs["reply_markup"] = reply_markup
+        if parse_mode:
+            kwargs["parse_mode"] = parse_mode
+        msg = await client.send_message(chat_id, text, **kwargs)
+        store_msg(user_id, msg)
+        return msg
+    except FloodWait as e:
+        await asyncio.sleep(min(e.value + 1, FLOOD_SLEEP_THRESHOLD))
+        return None
+    except Exception as e:
+        log.error(f"[nav_to] {e}")
+        return None
+
+
 async def send_or_edit(client, user_id: int, chat_id: int, text: str,
                        markup=None, parse_mode=None):
     """
