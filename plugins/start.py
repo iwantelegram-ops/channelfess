@@ -41,7 +41,6 @@ def user_keyboard():
         [
             [KeyboardButton("📂 My Channel"), KeyboardButton("📊 Statistik Saya")],
             [KeyboardButton("🔔 Notifikasi"),  KeyboardButton("ℹ️ Info Bot")],
-            [KeyboardButton("❓ Bantuan")],
         ],
         resize_keyboard=True,
     )
@@ -198,10 +197,11 @@ async def info_bot(client: Client, message: Message):
         f"   📡 Partner      <code>{active_p}</code> aktif · <code>{total_p}</code> total\n"
         f"   📦 Total repost <code>{total_r}</code>"
     )
-    markup = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📢 Kunjungi Channel Utama",
-                             url=f"https://t.me/{MAIN_CHANNEL_USERNAME}")
-    ]])
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Kunjungi Channel Utama",
+                             url=f"https://t.me/{MAIN_CHANNEL_USERNAME}")],
+        [InlineKeyboardButton("❓ Bantuan", callback_data="bantuan_page_0")],
+    ])
     await message.reply(text, reply_markup=markup, parse_mode=PM)
 
 
@@ -326,10 +326,18 @@ async def cb_bantuan_page(client: Client, cb):
     total  = len(pages)
     page   = max(0, min(page, total - 1))
     markup = _bantuan_markup(page, total)
-    try:
-        await cb.message.edit_text(pages[page], reply_markup=markup, parse_mode=PM)
-    except Exception:
-        pass
+
+    # Jika pesan sudah berisi halaman bantuan (bukan pesan info), edit langsung
+    # Jika masih pesan info (tombol Bantuan pertama kali diklik), kirim pesan baru
+    current_text = cb.message.text or ""
+    if current_text.startswith("❓"):
+        try:
+            await cb.message.edit_text(pages[page], reply_markup=markup, parse_mode=PM)
+        except Exception:
+            pass
+    else:
+        await client.send_message(cb.message.chat.id, pages[page], reply_markup=markup, parse_mode=PM)
+
     await answer_cb(cb)
 
 
