@@ -1,13 +1,6 @@
 """
 MongoStorage — Pyrogram 2.0.x storage backend menggunakan MongoDB.
-
-Di Pyrogram 2.0.x, storage fields adalah async methods dengan pola:
-  await storage.dc_id()        # getter — return nilai
-  await storage.dc_id(5)       # setter — simpan nilai
-
-Collections:
-  sessions  — auth data bot (dc_id, auth_key, user_id, dst)
-  peers     — cache peer Telegram (untuk resolusi ID/username)
+Session dan peer cache disimpan 100% di MongoDB.
 """
 import asyncio
 import logging
@@ -28,7 +21,6 @@ class MongoStorage(Storage):
         self._sessions  = collection_session
         self._peers_col = collection_peers
 
-        # In-memory cache
         self._dc_id     = 2
         self._api_id    = None
         self._test_mode = False
@@ -36,8 +28,6 @@ class MongoStorage(Storage):
         self._date      = 0
         self._user_id   = None
         self._is_bot    = True
-
-    # ── Load / Save ────────────────────────────────────────
 
     def _load(self):
         doc = self._sessions.find_one({"_id": self._name})
@@ -50,10 +40,9 @@ class MongoStorage(Storage):
             self._date      = doc.get("date",       0)
             self._user_id   = doc.get("user_id",    None)
             self._is_bot    = doc.get("is_bot",     True)
-            log.info(f"[MongoStorage] Session '{self._name}' loaded "
-                     f"(user_id={self._user_id})")
+            log.info(f"[MongoStorage] Session '{self._name}' loaded (user_id={self._user_id})")
         else:
-            log.info(f"[MongoStorage] Session '{self._name}' tidak ditemukan, mulai baru.")
+            log.info(f"[MongoStorage] Session '{self._name}' not found, starting fresh.")
 
     def _dump(self):
         self._sessions.update_one(
@@ -69,8 +58,6 @@ class MongoStorage(Storage):
             }},
             upsert=True,
         )
-
-    # ── Storage interface ──────────────────────────────────
 
     async def open(self):
         loop = asyncio.get_event_loop()
@@ -88,8 +75,6 @@ class MongoStorage(Storage):
         await loop.run_in_executor(
             None, lambda: self._sessions.delete_one({"_id": self._name})
         )
-
-    # ── Peer cache ─────────────────────────────────────────
 
     async def update_peers(self, peers: List[Tuple[int, int, str, str, str]]):
         if not peers:
@@ -154,12 +139,6 @@ class MongoStorage(Storage):
         if not doc:
             raise KeyError(f"Phone {phone_number} not in peer cache")
         return self._doc_to_input_peer(doc)
-
-    # ── Async getter/setter methods (Pyrogram 2.0.106) ──
-    #
-    # Pyrogram menggunakan sentinel `object` sebagai default:
-    #   await storage.dc_id()        → getter (value is object)
-    #   await storage.dc_id(5)       → setter (value is not object)
 
     async def dc_id(self, value=object):
         if value is object:

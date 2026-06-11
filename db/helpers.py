@@ -2,6 +2,7 @@
 from .mongo import (
     partners, posts, users, blacklist_col,
     settings_col, broadcast_col, activity_col, notif_col,
+    banned_col, rate_col, templates_col,
 )
 from datetime import datetime, timezone, timedelta
 import re
@@ -45,6 +46,12 @@ def search_partners(query: str):
 def get_top_partners(limit: int = 5):
     return list(partners.find({"paused": False}).sort("total_posts", -1).limit(limit))
 
+def get_partner_media_filter(channel_id: int) -> str:
+    partner = get_partner(channel_id)
+    if partner:
+        return partner.get("media_filter", "all")
+    return "all"
+
 
 # ═══════════════════════════════════════════════════════════
 #  POSTS
@@ -54,13 +61,16 @@ def _post_id(partner_id: int, msg_id: int) -> str:
     return f"{partner_id}_{msg_id}"
 
 def save_post(partner_id: int, partner_msg_id: int, main_msg_id: int):
-    posts.insert_one({
-        "_id":            _post_id(partner_id, partner_msg_id),
-        "partner_id":     partner_id,
-        "partner_msg_id": partner_msg_id,
-        "main_msg_id":    main_msg_id,
-        "added_at":       datetime.now(timezone.utc),
-    })
+    try:
+        posts.insert_one({
+            "_id":            _post_id(partner_id, partner_msg_id),
+            "partner_id":     partner_id,
+            "partner_msg_id": partner_msg_id,
+            "main_msg_id":    main_msg_id,
+            "added_at":       datetime.now(timezone.utc),
+        })
+    except Exception:
+        pass
 
 def get_post(partner_id: int, partner_msg_id: int):
     return posts.find_one({"_id": _post_id(partner_id, partner_msg_id)})
@@ -69,12 +79,7 @@ def delete_post(partner_id: int, partner_msg_id: int):
     posts.delete_one({"_id": _post_id(partner_id, partner_msg_id)})
 
 def get_all_tracked_posts() -> list:
-    """Ambil semua post yang sedang di-track (untuk polling)."""
     return list(posts.find({}, {"partner_id": 1, "partner_msg_id": 1, "main_msg_id": 1}))
-
-def get_posts_by_msg_id(partner_msg_id: int) -> list:
-    """Fallback: cari semua post dengan partner_msg_id tertentu (tanpa tahu partner_id)."""
-    return list(posts.find({"partner_msg_id": partner_msg_id}))
 
 def count_posts_by_partner(partner_id: int) -> int:
     return posts.count_documents({"partner_id": partner_id})
@@ -93,6 +98,9 @@ def get_posts_this_month() -> int:
 
 def get_recent_posts_by_partner(partner_id: int, limit: int = 5):
     return list(posts.find({"partner_id": partner_id}).sort("added_at", -1).limit(limit))
+
+def get_posts_by_msg_id(partner_msg_id: int) -> list:
+    return list(posts.find({"partner_msg_id": partner_msg_id}))
 
 
 # ═══════════════════════════════════════════════════════════
@@ -120,6 +128,55 @@ def count_active_users() -> int:
 
 
 # ═══════════════════════════════════════════════════════════
+#  BANNED USERS
+# ═══════════════════════════════════════════════════════════
+
+def is_banned(user_id: int) -> bool:
+    return banned_col.count_documents({"_id": user_id}) > 0
+
+def ban_user(user_id: int, reason: str = "", banned_by: int = 0):
+    banned_col.update_one(
+        {"_id": user_id},
+        {"$set": {
+            "reason":    reason,
+            "banned_by": banned_by,
+            "banned_at": datetime.now(timezone.utc),
+        }},
+        upsert=True,
+    )
+
+def unban_user(user_id: int):
+    banned_col.delete_one({"_id": user_id})
+
+def get_banned_list() -> list:
+    return list(banned_col.find().sort("banned_at", -1))
+
+def count_banned() -> int:
+    return banned_col.count_documents({})
+
+
+# ═══════════════════════════════════════════════════════════
+#  RATE LIMITING (per user, 1 menit window via TTL index)
+# ═══════════════════════════════════════════════════════════
+
+def check_rate_limit(user_id: int, limit: int = 20) -> bool:
+    """Return True jika user masih dalam batas rate limit."""
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(seconds=60)
+    count = rate_col.count_documents({
+        "user_id": user_id,
+        "ts": {"$gte": window_start},
+    })
+    return count < limit
+
+def record_rate_hit(user_id: int):
+    rate_col.insert_one({
+        "user_id": user_id,
+        "ts": datetime.now(timezone.utc),
+    })
+
+
+# ═══════════════════════════════════════════════════════════
 #  BLACKLIST
 # ═══════════════════════════════════════════════════════════
 
@@ -141,7 +198,6 @@ def remove_blacklist(word: str):
     )
 
 def contains_blacklisted(text: str):
-    """Return matched word jika teks mengandung kata blacklist, else None."""
     words = get_blacklist()
     text_lower = text.lower()
     for w in words:
@@ -183,6 +239,36 @@ def set_bot_setting(key: str, value):
 
 
 # ═══════════════════════════════════════════════════════════
+#  CAPTION TEMPLATE
+# ═══════════════════════════════════════════════════════════
+
+DEFAULT_CAPTION_TEMPLATE = (
+    "{channel_link}\n"
+    "{original_caption}\n"
+    "━━━━━━━━━━━━━━━━━━━━\n"
+    "👤  Owner   :  {owner_link}\n"
+    "📅  Tanggal :  {date}\n"
+    "🕒  Jam     :  {time}\n"
+    "━━━━━━━━━━━━━━━━━━━━\n"
+    "🔁  via {bot_link}"
+)
+
+def get_caption_template() -> str:
+    doc = templates_col.find_one({"_id": "global"})
+    return doc.get("template", DEFAULT_CAPTION_TEMPLATE) if doc else DEFAULT_CAPTION_TEMPLATE
+
+def set_caption_template(template: str):
+    templates_col.update_one(
+        {"_id": "global"},
+        {"$set": {"template": template, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+
+def reset_caption_template():
+    templates_col.delete_one({"_id": "global"})
+
+
+# ═══════════════════════════════════════════════════════════
 #  ACTIVITY LOG
 # ═══════════════════════════════════════════════════════════
 
@@ -201,6 +287,10 @@ def get_recent_activity(limit: int = 10, partner_id: int = None):
     if partner_id:
         query["partner_id"] = partner_id
     return list(activity_col.find(query).sort("ts", -1).limit(limit))
+
+def count_activity_today() -> int:
+    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    return activity_col.count_documents({"ts": {"$gte": start}})
 
 
 # ═══════════════════════════════════════════════════════════
