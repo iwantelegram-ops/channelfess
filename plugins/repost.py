@@ -11,7 +11,7 @@ Auto-repost dari channel partner ke channel utama.
 """
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pyrogram import Client, filters, raw
 from pyrogram.types import (
     Message, ChatMemberUpdated,
