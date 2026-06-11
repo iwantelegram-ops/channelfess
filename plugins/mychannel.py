@@ -202,6 +202,7 @@ def _detail_text(partner: dict, channel_id: int, user_id: int) -> str:
 
 @Client.on_callback_query(filters.regex(r"^ch_detail_(-?\d+)$"))
 async def cb_channel_detail(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         channel_id = int(cb.matches[0].group(1))
         user_id    = cb.from_user.id
@@ -209,6 +210,7 @@ async def cb_channel_detail(client: Client, cb: CallbackQuery):
 
         if not partner or partner.get("owner_id") != user_id:
             await answer_cb(cb, "Channel tidak ditemukan atau bukan milikmu.", True)
+            answered = True
             return
 
         text   = _detail_text(partner, channel_id, user_id)
@@ -217,9 +219,10 @@ async def cb_channel_detail(client: Client, cb: CallbackQuery):
     except Exception as e:
         log.error(f"[cb_channel_detail] {e}")
         await answer_cb(cb, "❌ Error, coba lagi.", True)
-        return
+        answered = True
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -322,6 +325,7 @@ async def cb_toggle_notif_repost(client: Client, cb: CallbackQuery):
 
 @Client.on_callback_query(filters.regex(r"^ch_stats_(-?\d+)$"))
 async def cb_ch_stats(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         channel_id = int(cb.matches[0].group(1))
         user_id    = cb.from_user.id
@@ -329,6 +333,7 @@ async def cb_ch_stats(client: Client, cb: CallbackQuery):
 
         if not partner or partner.get("owner_id") != user_id:
             await answer_cb(cb, "Tidak diizinkan.", True)
+            answered = True
             return
 
         now   = datetime.now(timezone.utc)
@@ -364,9 +369,10 @@ async def cb_ch_stats(client: Client, cb: CallbackQuery):
     except Exception as e:
         log.error(f"[cb_ch_stats] {e}")
         await answer_cb(cb, "❌ Error saat ambil statistik.", True)
-        return
+        answered = True
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -375,6 +381,7 @@ async def cb_ch_stats(client: Client, cb: CallbackQuery):
 
 @Client.on_callback_query(filters.regex(r"^ch_history_(-?\d+)$"))
 async def cb_ch_history(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         channel_id  = int(cb.matches[0].group(1))
         user_id     = cb.from_user.id
@@ -382,6 +389,7 @@ async def cb_ch_history(client: Client, cb: CallbackQuery):
 
         if not partner or partner.get("owner_id") != user_id:
             await answer_cb(cb, "Tidak diizinkan.", True)
+            answered = True
             return
 
         recent      = get_recent_posts_by_partner(channel_id, limit=7)
@@ -410,9 +418,10 @@ async def cb_ch_history(client: Client, cb: CallbackQuery):
     except Exception as e:
         log.error(f"[cb_ch_history] {e}")
         await answer_cb(cb, "❌ Error saat ambil riwayat.", True)
-        return
+        answered = True
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -421,6 +430,7 @@ async def cb_ch_history(client: Client, cb: CallbackQuery):
 
 @Client.on_callback_query(filters.regex(r"^ch_remove_confirm_(-?\d+)$"))
 async def cb_ch_remove_confirm(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         channel_id = int(cb.matches[0].group(1))
         user_id    = cb.from_user.id
@@ -428,6 +438,7 @@ async def cb_ch_remove_confirm(client: Client, cb: CallbackQuery):
 
         if not partner or partner.get("owner_id") != user_id:
             await answer_cb(cb, "Tidak diizinkan.", True)
+            answered = True
             return
 
         ch_name = partner.get("channel_name", str(channel_id))
@@ -446,9 +457,10 @@ async def cb_ch_remove_confirm(client: Client, cb: CallbackQuery):
     except Exception as e:
         log.error(f"[cb_ch_remove_confirm] {e}")
         await answer_cb(cb, "❌ Error.", True)
-        return
+        answered = True
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 @Client.on_callback_query(filters.regex(r"^ch_remove_do_(-?\d+)$"))

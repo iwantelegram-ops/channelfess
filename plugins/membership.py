@@ -35,6 +35,7 @@ def user_keyboard():
         [
             [KeyboardButton("📂 My Channel"), KeyboardButton("📊 Statistik Saya")],
             [KeyboardButton("🔔 Notifikasi"),  KeyboardButton("ℹ️ Info Bot")],
+            [KeyboardButton("❓ Bantuan")],
         ],
         resize_keyboard=True,
     )
