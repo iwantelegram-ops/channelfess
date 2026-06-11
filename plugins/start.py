@@ -1,71 +1,120 @@
 """
-/start — Welcome screen. Owner dan user mendapat tampilan berbeda.
-Parse mode: HTML di seluruh file.
+/start — Welcome screen dengan full inline keyboard.
+Tidak ada reply keyboard (bottom bar) sama sekali.
 """
 import logging
 from datetime import datetime, timezone
 from pyrogram import Client, filters
-from pyrogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pyrogram.enums import ParseMode
-from config import OWNER_ID, MAIN_CHANNEL_USERNAME, BOT_USERNAME, OWNER_USERNAME, OWNER_NAME, BOT_NAME
-from db.helpers import upsert_user, get_maintenance, count_partners, get_active_partners
+
+from config import OWNER_ID, MAIN_CHANNEL_USERNAME, BOT_USERNAME, BOT_NAME
+from db.helpers import (
+    upsert_user, get_maintenance, count_partners, get_active_partners,
+    is_banned, check_rate_limit, record_rate_hit,
+)
 from db.mongo import posts
-from utils import check_membership, store_msg
+from utils import check_membership, store_msg, send_or_edit, answer_cb
 
 log = logging.getLogger("fessbot.start")
 PM  = ParseMode.HTML
 
+SEP = "─" * 30
+
+
 # ═══════════════════════════════════════════════════════════
-#  KEYBOARDS
+#  MARKUP GENERATORS
 # ═══════════════════════════════════════════════════════════
 
-def owner_keyboard():
-    return ReplyKeyboardMarkup(
+def owner_main_markup():
+    return InlineKeyboardMarkup([
         [
-            [KeyboardButton("📊 Dashboard"), KeyboardButton("📋 Partner")],
-            [KeyboardButton("📣 Broadcast"), KeyboardButton("🔧 Tools")],
-            [KeyboardButton("📝 Aktivitas"), KeyboardButton("⚙️ Pengaturan")],
+            InlineKeyboardButton("📊 Dashboard",   callback_data="owner_dashboard"),
+            InlineKeyboardButton("📋 Partner",     callback_data="owner_partner_0"),
         ],
-        resize_keyboard=True,
-    )
-
-def user_keyboard():
-    return ReplyKeyboardMarkup(
         [
-            [KeyboardButton("📂 My Channel"), KeyboardButton("📊 Statistik Saya")],
-            [KeyboardButton("🔔 Notifikasi"),  KeyboardButton("ℹ️ Info Bot")],
+            InlineKeyboardButton("📣 Broadcast",   callback_data="owner_broadcast"),
+            InlineKeyboardButton("🔧 Tools",       callback_data="owner_tools"),
         ],
-        resize_keyboard=True,
-    )
+        [
+            InlineKeyboardButton("📝 Aktivitas",   callback_data="owner_activity"),
+            InlineKeyboardButton("⚙️ Pengaturan",  callback_data="owner_settings"),
+        ],
+        [
+            InlineKeyboardButton("🚫 Banned Users", callback_data="owner_banned_list"),
+            InlineKeyboardButton("📤 Export Data",  callback_data="owner_export"),
+        ],
+    ])
 
-def not_joined_inline(channel_username: str):
+
+def user_main_markup():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📂 My Channel",      callback_data="user_channels_0"),
+            InlineKeyboardButton("📊 Statistik Saya",  callback_data="user_stats"),
+        ],
+        [
+            InlineKeyboardButton("🔔 Notifikasi",      callback_data="user_notif"),
+            InlineKeyboardButton("ℹ️ Info Bot",         callback_data="user_info"),
+        ],
+        [
+            InlineKeyboardButton("📖 Tutorial",        callback_data="user_tutorial"),
+            InlineKeyboardButton("🆘 Bantuan",         callback_data="user_help"),
+        ],
+    ])
+
+
+def not_joined_markup():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 Join Channel Utama",
-                              url=f"https://t.me/{channel_username}")],
-        [InlineKeyboardButton("✅ Sudah Join — Cek Ulang",
+                              url=f"https://t.me/{MAIN_CHANNEL_USERNAME}")],
+        [InlineKeyboardButton("✅ Sudah Join — Verifikasi",
                               callback_data="recheck_join")],
     ])
 
-def setup_admin_inline():
+
+def setup_admin_markup():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
-            "➕ Jadikan Bot Admin di Channel",
+            "➕ Tambah Bot sebagai Admin",
             url=(
                 f"https://t.me/{BOT_USERNAME}"
                 f"?startchannel=true"
                 f"&admin=post_messages+edit_messages+delete_messages+invite_users"
             ),
         )],
+        [InlineKeyboardButton("📂 My Channel", callback_data="user_channels_0")],
     ])
+
 
 # ═══════════════════════════════════════════════════════════
 #  /start HANDLER
 # ═══════════════════════════════════════════════════════════
 
-@Client.on_message(filters.command("start") & filters.private, group=1)
+@Client.on_message(filters.command("start") & filters.private, group=0)
 async def start(client: Client, message: Message):
     user_id   = message.from_user.id
     user_name = message.from_user.first_name or "Pengguna"
+
+    # ── Rate limit check (kecuali owner) ──────────────────
+    if user_id != OWNER_ID:
+        if not check_rate_limit(user_id, limit=20):
+            await message.reply(
+                "⚡ <b>Terlalu banyak permintaan!</b>\n\n"
+                "Tunggu beberapa detik sebelum mencoba lagi.",
+                parse_mode=PM,
+            )
+            return
+        record_rate_hit(user_id)
+
+    # ── Ban check ──────────────────────────────────────────
+    if user_id != OWNER_ID and is_banned(user_id):
+        await message.reply(
+            "🚫 <b>Akun kamu diblokir dari menggunakan bot ini.</b>\n\n"
+            "Hubungi admin jika ini adalah kesalahan.",
+            parse_mode=PM,
+        )
+        return
 
     # ── Owner ──────────────────────────────────────────────
     if user_id == OWNER_ID:
@@ -73,14 +122,13 @@ async def start(client: Client, message: Message):
         active_p = len(get_active_partners())
         total_r  = posts.count_documents({})
         text = (
-            f"⚡ <b>FessBot v2 — Control Panel</b>\n"
-            f"<code>{'─' * 28}</code>\n\n"
-            f"📡 Partner   <code>{active_p}</code> aktif · <code>{total_p}</code> total\n"
-            f"📦 Repost    <code>{total_r}</code> all-time\n\n"
-            f"Semua sistem berjalan normal. 🟢\n"
-            f"Gunakan menu di bawah. 👇"
+            f"⚡ <b>{BOT_NAME} v3 — Owner Panel</b>\n"
+            f"<code>{SEP}</code>\n\n"
+            f"📡 Partner    <code>{active_p}</code> aktif · <code>{total_p}</code> total\n"
+            f"📦 All-time   <code>{total_r}</code> repost\n\n"
+            f"Selamat datang kembali, pilih menu: 👇"
         )
-        msg = await message.reply(text, reply_markup=owner_keyboard(), parse_mode=PM)
+        msg = await message.reply(text, reply_markup=owner_main_markup(), parse_mode=PM)
         store_msg(user_id, msg)
         return
 
@@ -89,9 +137,9 @@ async def start(client: Client, message: Message):
     if maint.get("active"):
         reason = maint.get("reason", "Sedang dalam pemeliharaan.")
         await message.reply(
-            f"🔧 <b>Bot sedang maintenance</b>\n\n"
+            f"🔧 <b>Bot Sedang Maintenance</b>\n\n"
             f"<i>{reason}</i>\n\n"
-            f"Coba lagi beberapa saat ya! 🙏",
+            f"Coba lagi beberapa saat. 🙏",
             parse_mode=PM,
         )
         return
@@ -108,10 +156,12 @@ async def start(client: Client, message: Message):
     if not joined:
         msg = await message.reply(
             f"👋 <b>Halo, {user_name}!</b>\n\n"
-            f"Untuk menggunakan <b>FessBot</b>, kamu perlu join channel utama dulu.\n\n"
-            f"Ketuk <b>Join Channel Utama</b> di bawah, lalu ketuk "
-            f"<b>Sudah Join — Cek Ulang</b>. 👇",
-            reply_markup=not_joined_inline(MAIN_CHANNEL_USERNAME),
+            f"Untuk menggunakan <b>{BOT_NAME}</b>, kamu perlu bergabung "
+            f"ke channel utama kami terlebih dahulu.\n\n"
+            f"1️⃣ Klik <b>Join Channel Utama</b>\n"
+            f"2️⃣ Klik <b>Sudah Join — Verifikasi</b>\n\n"
+            f"<i>Proses otomatis, tanpa perlu kirim pesan apapun.</i>",
+            reply_markup=not_joined_markup(),
             parse_mode=PM,
         )
         store_msg(user_id, msg)
@@ -119,29 +169,56 @@ async def start(client: Client, message: Message):
 
     # ── User sudah join ────────────────────────────────────
     upsert_user(user_id, {"joined": True, "joined_at": datetime.now(timezone.utc)})
-    msg = await message.reply(
-        f"⚡ <b>Halo, {user_name}!</b>\n\n"
-        f"<b>FessBot</b> otomatis meneruskan foto &amp; video dari channelmu "
-        f"ke channel utama.\n\n"
-        f"<b>Cara setup:</b>\n"
+    text = (
+        f"⚡ <b>Halo, {user_name}!</b>\n"
+        f"<code>{SEP}</code>\n\n"
+        f"<b>{BOT_NAME}</b> meneruskan konten dari channelmu "
+        f"ke channel utama secara real-time.\n\n"
+        f"<b>🚀 Cara mulai:</b>\n"
         f"1️⃣  Tambahkan bot sebagai <b>Admin</b> di channelmu\n"
         f"2️⃣  Channel otomatis terdaftar\n"
         f"3️⃣  Konten di-repost real-time ✅\n\n"
-        f"<b>📋 Syarat agar bot bisa bekerja:</b>\n"
-        f"Bot <b>wajib</b> dijadikan admin di channelmu dengan minimal izin berikut:\n\n"
-        f"• 📝 <b>Post Messages</b> — agar bot bisa mengirim/repost konten ke channel\n"
-        f"• ✏️ <b>Edit Messages</b> — agar bot bisa mengedit pesan yang sudah dikirim\n"
-        f"• 🗑️ <b>Delete Messages</b> — agar bot bisa menghapus konten yang dilaporkan/dihapus\n"
-        f"• ➕ <b>Invite Users via Link</b> — agar bot bisa mengelola akses member channel\n\n"
-        f"Tanpa izin di atas, bot <b>tidak akan berfungsi</b> dengan baik di channelmu.\n\n"
-        f"Tekan tombol di bawah untuk langsung menambahkan bot sebagai admin "
-        f"dengan izin yang sudah diatur otomatis. 👇",
-        reply_markup=setup_admin_inline(),
-        parse_mode=PM,
+        f"Pilih menu di bawah untuk mulai:"
     )
+    msg = await message.reply(text, reply_markup=user_main_markup(), parse_mode=PM)
     store_msg(user_id, msg)
-    msg2 = await message.reply(
-        "Atau buka menu di bawah untuk fitur lainnya. 👇",
-        reply_markup=user_keyboard(),
-    )
-    store_msg(user_id, msg2)
+
+
+# ═══════════════════════════════════════════════════════════
+#  CALLBACK: HOME (kembali ke main menu)
+# ═══════════════════════════════════════════════════════════
+
+@Client.on_callback_query(filters.regex(r"^home$"))
+async def cb_home(client: Client, cb: CallbackQuery):
+    try:
+        user_id   = cb.from_user.id
+        user_name = cb.from_user.first_name or "Pengguna"
+
+        if user_id == OWNER_ID:
+            total_p  = count_partners()
+            active_p = len(get_active_partners())
+            total_r  = posts.count_documents({})
+            text = (
+                f"⚡ <b>{BOT_NAME} v3 — Owner Panel</b>\n"
+                f"<code>{SEP}</code>\n\n"
+                f"📡 Partner    <code>{active_p}</code> aktif · <code>{total_p}</code> total\n"
+                f"📦 All-time   <code>{total_r}</code> repost\n\n"
+                f"Pilih menu: 👇"
+            )
+            await safe_edit_cb(cb, text, owner_main_markup())
+        else:
+            text = (
+                f"⚡ <b>Halo, {user_name}!</b>\n"
+                f"<code>{SEP}</code>\n\n"
+                f"Pilih menu di bawah:"
+            )
+            await safe_edit_cb(cb, text, user_main_markup())
+    except Exception as e:
+        log.error(f"[cb_home] {e}")
+    finally:
+        await answer_cb(cb)
+
+
+async def safe_edit_cb(cb, text, markup):
+    from utils import safe_edit
+    await safe_edit(cb.message, text, markup=markup, parse_mode=PM)

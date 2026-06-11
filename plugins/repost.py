@@ -2,16 +2,19 @@
 Auto-repost dari channel partner ke channel utama.
 - Deteksi bot jadi admin → daftarkan partner
 - Blacklist kata otomatis
+- Media filter per channel (photo/video/text/all)
 - FloodWait handling dengan exponential backoff
-- Notifikasi ke owner (cek setting notif)
+- Notifikasi ke owner channel
 - Counter total_posts per partner
-- Auto-hapus repost jika post asli dihapus
+- Auto-hapus repost jika post asli dihapus (lazy check + raw update)
 - Log aktivitas ke MongoDB
-- Dukung foto, video, dokumen, audio, teks
+- Caption template kustom dari MongoDB
+- Support foto, video, teks
 """
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+
 from pyrogram import Client, filters, raw
 from pyrogram.types import (
     Message, ChatMemberUpdated,
@@ -22,11 +25,13 @@ from pyrogram.errors import (
     FloodWait, ChatWriteForbidden, PeerIdInvalid, MessageIdInvalid,
     ChatAdminRequired, UserNotParticipant, ChannelPrivate,
 )
+
 from config import MAIN_CHANNEL_ID
 from db.helpers import (
     get_partner, upsert_partner, save_post, get_post, delete_post,
     increment_partner_posts, contains_blacklisted, count_posts_by_partner,
     get_notif_setting, log_activity, get_bot_setting, get_all_partners,
+    get_recent_posts_by_partner, get_caption_template,
 )
 from utils import safe_send, safe_delete, answer_cb
 
@@ -35,7 +40,7 @@ PM  = ParseMode.MARKDOWN
 
 
 # ═══════════════════════════════════════════════════════════
-#  CAPTION BUILDER — JANGAN DIUBAH (sesuai permintaan owner)
+#  CAPTION BUILDER — menggunakan template dari MongoDB
 # ═══════════════════════════════════════════════════════════
 
 def build_caption(original_caption, channel_title, invite_link,
@@ -44,29 +49,27 @@ def build_caption(original_caption, channel_title, invite_link,
     date = now.strftime("%d %b %Y")
     time = now.strftime("%H:%M UTC")
 
-    # Channel asal — clickable via invite_link (t.me/+ atau t.me/username)
-    if invite_link:
-        ch_link = f"[{channel_title}]({invite_link})"
-    else:
-        ch_link = f"**{channel_title}**"
-
-    # Owner — clickable link ke profil user (tg://user?id=...)
+    ch_link   = f"[{channel_title}]({invite_link})" if invite_link else f"**{channel_title}**"
     owner_link = f"[{owner_name}](tg://user?id={owner_id})"
+    bot_link   = f"[{bot_name}](https://t.me/{bot_username}?start=start)"
 
-    # Via bot — nama bot dari sistem, clickable link start bot
-    bot_link = f"[{bot_name}](https://t.me/{bot_username}?start=start)"
+    template = get_caption_template()
 
-    cap = f"{ch_link}\n"
-    if original_caption:
-        cap += f"\n{original_caption}\n"
-    cap += (
-        f"\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤  Owner   :  {owner_link}\n"
-        f"📅  Tanggal :  {date}\n"
-        f"🕒  Jam     :  {time}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔁  via {bot_link}"
+    cap = template.format(
+        channel_link      = ch_link,
+        original_caption  = original_caption.strip() if original_caption else "",
+        owner_link        = owner_link,
+        date              = date,
+        time              = time,
+        bot_link          = bot_link,
+        post_number       = post_number,
+        channel_title     = channel_title,
+        owner_name        = owner_name,
     )
+
+    if not original_caption and "{original_caption}" in template:
+        cap = cap.replace("\n\n\n", "\n\n")
+
     return cap.strip()
 
 
@@ -75,37 +78,22 @@ def build_caption(original_caption, channel_title, invite_link,
 # ═══════════════════════════════════════════════════════════
 
 async def _get_or_create_invite_link(client: Client, channel_id: int) -> str:
-    """
-    3 langkah:
-      1. Cek DB — jika sudah ada, pakai langsung.
-      2. Jika belum, generate via Telegram lalu simpan ke DB.
-      3. Jika tidak ada izin (ChatAdminRequired dll), abaikan diam-diam → return "".
-    """
-    # Langkah 1 — ambil dari DB
     partner = get_partner(channel_id)
     if partner and partner.get("invite_link"):
         return partner["invite_link"]
 
-    # Langkah 2 — generate dari Telegram
-    _NO_PERM_ERRORS = (
-        ChatAdminRequired,
-        ChatWriteForbidden,
-        ChannelPrivate,
-        UserNotParticipant,
-    )
+    _NO_PERM = (ChatAdminRequired, ChatWriteForbidden, ChannelPrivate, UserNotParticipant)
     try:
         link = await client.export_chat_invite_link(channel_id)
         if link:
             upsert_partner(channel_id, {"invite_link": link})
-            log.info(f"[invite_link] Generated untuk {channel_id}: {link}")
             return link
-    except _NO_PERM_ERRORS:
-        # Langkah 3 — tidak ada izin, abaikan tanpa error
-        log.debug(f"[invite_link] Tidak ada izin generate untuk {channel_id}, diabaikan")
+    except _NO_PERM:
+        log.debug(f"[invite_link] Tidak ada izin untuk {channel_id}")
     except FloodWait as e:
-        log.warning(f"[invite_link] FloodWait {e.value}s untuk {channel_id}, skip")
+        log.warning(f"[invite_link] FloodWait {e.value}s, skip")
     except Exception as e:
-        log.warning(f"[invite_link] Gagal generate untuk {channel_id}: {e}")
+        log.warning(f"[invite_link] Gagal untuk {channel_id}: {e}")
     return ""
 
 
@@ -129,7 +117,6 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
             owner_id   = inviter.id   if inviter else 0
             owner_name = inviter.first_name if inviter else "Unknown"
 
-            # Generate invite link untuk caption clickable
             invite_link = await _get_or_create_invite_link(client, channel_id)
 
             upsert_partner(channel_id, {
@@ -142,13 +129,11 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
                 "reason":       "Menunggu konfirmasi owner",
                 "added_at":     datetime.now(timezone.utc),
                 "total_posts":  0,
+                "media_filter": "all",
             })
             log_activity("partner_added", channel_id, {"owner_id": owner_id})
             log.info(f"[admin_change] Channel terdaftar: {update.chat.title} ({channel_id})")
 
-            # Pastikan bot subscribe ke updates channel ini
-            # (Telegram hanya kirim UpdateDeleteChannelMessages ke bot
-            #  yang pernah resolve/fetch channel tersebut)
             try:
                 await client.get_chat(channel_id)
             except Exception:
@@ -158,18 +143,18 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
                 await safe_send(client.send_message(
                     owner_id,
                     f"🎉 **Channel berhasil terhubung!**\n\n"
-                    f"📡 **{update.chat.title}** sudah terdaftar di FessBot.\n\n"
-                    f"Aktifkan sekarang agar postinganmu mulai di-repost ke channel utama?",
+                    f"📡 **{update.chat.title}** sudah terdaftar.\n\n"
+                    f"Aktifkan sekarang agar postinganmu mulai di-repost?",
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("✅ Ya, Aktifkan Sekarang", callback_data=f"confirm_sync_{channel_id}")],
-                        [InlineKeyboardButton("⏸️ Nanti Saja", callback_data=f"confirm_nosync_{channel_id}")],
+                        [InlineKeyboardButton("✅ Aktifkan Sekarang", callback_data=f"confirm_sync_{channel_id}")],
+                        [InlineKeyboardButton("⏸ Nanti Saja",        callback_data=f"confirm_nosync_{channel_id}")],
                     ]),
                 ))
 
     elif new_status in (ChatMemberStatus.MEMBER, ChatMemberStatus.LEFT, ChatMemberStatus.BANNED):
         existing = get_partner(channel_id)
         if existing:
-            upsert_partner(channel_id, {"paused": True, "reason": "Bot dicopot dari admin channel"})
+            upsert_partner(channel_id, {"paused": True, "reason": "Bot dicopot dari admin"})
             log_activity("bot_removed", channel_id)
             oid = existing.get("owner_id")
             if oid:
@@ -180,11 +165,10 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
                             oid,
                             f"⚠️ **Bot dicopot dari admin channel.**\n\n"
                             f"📡 **{existing.get('channel_name')}**\n\n"
-                            f"Repost otomatis dihentikan. Tambahkan bot kembali "
-                            f"sebagai admin untuk melanjutkan.",
+                            f"Repost otomatis dihentikan. Tambahkan bot kembali sebagai admin untuk melanjutkan.",
                         )
                     except Exception as e:
-                        log.warning(f"[on_bot_admin_change] Gagal kirim notif ke {oid}: {e}")
+                        log.warning(f"[on_bot_admin_change] Gagal notif ke {oid}: {e}")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -212,12 +196,14 @@ async def cb_confirm_sync(client: Client, cb):
                 f"📡 **{partner.get('channel_name', channel_id)}** kini meneruskan "
                 f"postingan ke channel utama secara real-time. 🚀\n\n"
                 f"Buka **My Channel** untuk kelola kapan saja.",
-                reply_markup=None,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📂 My Channel", callback_data="user_channels_0")
+                ]]),
             )
         except Exception:
             pass
 
-        await answer_cb(cb, "Aktif!")
+        await answer_cb(cb, "✅ Aktif!")
         answered = True
     except Exception as e:
         log.error(f"[cb_confirm_sync] {e}")
@@ -244,8 +230,10 @@ async def cb_confirm_nosync(client: Client, cb):
             await cb.message.edit_text(
                 f"⏸ **Tidak diaktifkan.**\n\n"
                 f"📡 **{partner.get('channel_name', channel_id)}** terdaftar tapi belum aktif.\n"
-                f"Anda bisa mengubahnya kapan saja di **My Channel**.",
-                reply_markup=None,
+                f"Aktifkan kapan saja di **My Channel**.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📂 My Channel", callback_data="user_channels_0")
+                ]]),
             )
         except Exception:
             pass
@@ -270,7 +258,10 @@ async def cmd_daftarkan(client: Client, message: Message):
         await message.reply(
             "📋 **Cara daftarkan channel manual:**\n\n"
             "`1.` Forward satu postingan dari channelmu ke sini\n"
-            "`2.` Reply pesan forward itu dengan `/daftarkan`"
+            "`2.` Reply pesan forward itu dengan `/daftarkan`",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📂 My Channel", callback_data="user_channels_0")
+            ]]),
         )
         return
 
@@ -292,7 +283,7 @@ async def cmd_daftarkan(client: Client, message: Message):
         await asyncio.sleep(min(e.value + 2, 60))
         await message.reply("⚠️ Rate limit Telegram, coba lagi sebentar.")
         return
-    except (PeerIdInvalid, Exception) as e:
+    except Exception as e:
         await message.reply(f"❌ Tidak bisa akses channel.\n`{e}`")
         return
 
@@ -305,7 +296,6 @@ async def cmd_daftarkan(client: Client, message: Message):
         await message.reply("❌ Tidak bisa verifikasi status kamu di channel.")
         return
 
-    # Generate invite link untuk caption clickable
     invite_link = await _get_or_create_invite_link(client, channel_id)
 
     upsert_partner(channel_id, {
@@ -318,6 +308,7 @@ async def cmd_daftarkan(client: Client, message: Message):
         "reason":       "Menunggu konfirmasi owner",
         "added_at":     datetime.now(timezone.utc),
         "total_posts":  0,
+        "media_filter": "all",
     })
     log_activity("partner_manual_add", channel_id, {"owner_id": user_id})
 
@@ -325,13 +316,13 @@ async def cmd_daftarkan(client: Client, message: Message):
         f"🎉 **Channel terdaftar!**\n\n📡 **{chat.title}**\n\nAktifkan sekarang?",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Ya, Aktifkan Sekarang", callback_data=f"confirm_sync_{channel_id}")],
-            [InlineKeyboardButton("⏸️ Nanti Saja", callback_data=f"confirm_nosync_{channel_id}")],
+            [InlineKeyboardButton("⏸ Nanti Saja",             callback_data=f"confirm_nosync_{channel_id}")],
         ]),
     )
 
 
 # ═══════════════════════════════════════════════════════════
-#  REPOST — foto, video, dokumen, audio, teks
+#  REPOST — foto, video, teks
 # ═══════════════════════════════════════════════════════════
 
 MEDIA_FILTER = (filters.photo | filters.video | filters.text)
@@ -344,6 +335,28 @@ async def repost(client: Client, message: Message):
 
     if not partner or partner.get("paused"):
         return
+
+    # ── Media filter per channel ───────────────────────────
+    mf          = partner.get("media_filter", "all")
+    is_photo    = bool(message.photo)
+    is_video    = bool(message.video)
+    is_text_only = bool(message.text and not message.photo and not message.video)
+
+    if mf == "photo" and not is_photo:
+        return
+    if mf == "video" and not is_video:
+        return
+    if mf == "text" and not is_text_only:
+        return
+
+    if not (is_photo or is_video or is_text_only):
+        return
+
+    # ── Teks murni — cek setting global ───────────────────
+    if is_text_only:
+        allow_text = get_bot_setting("allow_text_repost", True)
+        if not allow_text:
+            return
 
     # ── Blacklist ──────────────────────────────────────────
     caption_text = message.caption or message.text or ""
@@ -358,8 +371,7 @@ async def repost(client: Client, message: Message):
                         owner_id,
                         f"🚫 **Postingan ditolak — kata terlarang**\n\n"
                         f"📡 **{partner.get('channel_name')}**\n"
-                        f"⚠️ Kata: `{matched_word}`\n\n"
-                        f"Postingan tidak diteruskan ke channel utama.",
+                        f"⚠️ Kata: `{matched_word}`",
                     )
                 except Exception:
                     pass
@@ -368,12 +380,10 @@ async def repost(client: Client, message: Message):
 
     post_number = count_posts_by_partner(channel_id) + 1
 
-    # Ambil info bot dari sistem (bukan dari env)
-    me = await client.get_me()
+    me             = await client.get_me()
     bot_name_real  = me.first_name or me.username or "Bot"
     bot_uname_real = me.username or ""
 
-    # Ambil invite_link dari DB; kalau belum ada, generate sekarang
     invite_link = partner.get("invite_link", "")
     if not invite_link:
         invite_link = await _get_or_create_invite_link(client, channel_id)
@@ -389,20 +399,7 @@ async def repost(client: Client, message: Message):
         bot_username     = bot_uname_real,
     )
 
-    # ── Cek tipe pesan ────────────────────────────────────
-    is_media     = bool(message.photo or message.video)
-    is_text_only = bool(message.text and not is_media)
-
-    # Jika pesan teks murni, cek setting allow_text_repost
-    if is_text_only:
-        allow_text = get_bot_setting("allow_text_repost", True)
-        if not allow_text:
-            return
-
-    # Jika bukan media dan bukan teks murni, abaikan
-    if not is_media and not is_text_only:
-        return
-
+    # ── Buat link post asli ────────────────────────────────
     uname = partner.get("username", "")
     if uname:
         original_url = f"https://t.me/{uname}/{message.id}"
@@ -414,9 +411,9 @@ async def repost(client: Client, message: Message):
         InlineKeyboardButton("🔗 Lihat Post Asli", url=original_url)
     ]])
 
-    # Kirim manual (bukan message.copy) agar bisa kontrol tanpa web preview.
-    # Message.copy() di Pyrogram 2.x tidak support disable_web_page_preview.
-    if message.photo:
+    # ── Kirim ke channel utama ─────────────────────────────
+    sent = None
+    if is_photo:
         sent = await safe_send(
             client.send_photo(
                 chat_id      = MAIN_CHANNEL_ID,
@@ -426,18 +423,21 @@ async def repost(client: Client, message: Message):
                 reply_markup = btn,
             )
         )
-    elif message.video:
+    elif is_video:
+        thumb = None
+        if message.video.thumbs:
+            thumb = message.video.thumbs[0].file_id
         sent = await safe_send(
             client.send_video(
-                chat_id      = MAIN_CHANNEL_ID,
-                video        = message.video.file_id,
-                caption      = cap,
-                duration     = message.video.duration,
-                width        = message.video.width,
-                height       = message.video.height,
-                thumb        = message.video.thumbs[0].file_id if message.video.thumbs else None,
-                parse_mode   = PM,
-                reply_markup = btn,
+                chat_id            = MAIN_CHANNEL_ID,
+                video              = message.video.file_id,
+                caption            = cap,
+                duration           = message.video.duration,
+                width              = message.video.width,
+                height             = message.video.height,
+                thumb              = thumb,
+                parse_mode         = PM,
+                reply_markup       = btn,
                 supports_streaming = True,
             )
         )
@@ -451,15 +451,12 @@ async def repost(client: Client, message: Message):
                 disable_web_page_preview = True,
             )
         )
-    else:
-        sent = None
 
     if sent:
         save_post(channel_id, message.id, sent.id)
         increment_partner_posts(channel_id)
         log_activity("repost_success", channel_id, {"main_msg_id": sent.id})
 
-        # Lazy check: setiap ada post baru, sekalian cek post lama channel ini
         asyncio.create_task(_lazy_check_channel(client, channel_id))
 
         owner_id = partner.get("owner_id")
@@ -470,27 +467,25 @@ async def repost(client: Client, message: Message):
                 try:
                     await client.send_message(
                         owner_id,
-                        f"✅ **Postingan berhasil di-repost!**\n\n"
+                        f"✅ **Repost berhasil!**\n\n"
                         f"📡 **{partner.get('channel_name')}**\n"
                         f"📦 Repost ke-{post_number}\n"
-                        f"🔗 [Lihat di channel utama]"
-                        f"(https://t.me/c/{main_id_str}/{sent.id})",
+                        f"🔗 [Lihat di channel utama](https://t.me/c/{main_id_str}/{sent.id})",
                         disable_web_page_preview=True,
                     )
                 except Exception as e:
-                    log.debug(f"[repost] Gagal kirim notif ke {owner_id}: {e}")
+                    log.debug(f"[repost] Gagal notif ke {owner_id}: {e}")
     else:
         log.warning(f"[repost] Gagal repost dari {channel_id} msg {message.id}")
         log_activity("repost_fail", channel_id)
 
 
 # ═══════════════════════════════════════════════════════════
-#  HAPUS REPOST — dua lapisan: raw update + polling backup
+#  HAPUS REPOST — raw update + lazy check
 # ═══════════════════════════════════════════════════════════
 
 @Client.on_raw_update()
 async def on_raw_delete(client: Client, update, users, chats):
-    # Tetap ada sebagai lapisan pertama — bekerja jika Telegram suatu saat kirim event ini
     if not isinstance(update, raw.types.UpdateDeleteChannelMessages):
         return
     raw_channel_id = update.channel_id
@@ -501,11 +496,9 @@ async def on_raw_delete(client: Client, update, users, chats):
 
 async def _lazy_check_channel(client: Client, channel_id: int):
     """
-    Dipanggil saat ada post baru dari channel_id.
-    Cek max 10 post lama dari channel ini — kalau sudah dihapus, hapus repostnya.
-    Tidak agresif: hanya jalan saat ada aktivitas di channel tersebut.
+    Cek max 10 post lama dari channel_id saat ada aktivitas baru.
+    Jika sudah dihapus di channel asli → hapus repostnya.
     """
-    from db.helpers import get_recent_posts_by_partner
     old_posts = get_recent_posts_by_partner(channel_id, limit=10)
     if not old_posts:
         return
@@ -513,18 +506,14 @@ async def _lazy_check_channel(client: Client, channel_id: int):
         try:
             msg = await client.get_messages(channel_id, post["partner_msg_id"])
             if msg is None or msg.empty:
-                log.info(f"[lazy_check] Post {post['partner_msg_id']} sudah dihapus → hapus repost")
+                log.info(f"[lazy_check] Post {post['partner_msg_id']} sudah dihapus")
                 await _process_deleted(client, channel_id, [post["partner_msg_id"]])
         except Exception:
-            # Tidak bisa akses → anggap sudah dihapus
             await _process_deleted(client, channel_id, [post["partner_msg_id"]])
         await asyncio.sleep(0.3)
 
 
 async def _process_deleted(client, channel_id: int, msg_ids: list):
-    """Cek DB dan hapus repost di channel utama untuk setiap msg_id yang dihapus.
-    Hanya berjalan jika setting 'auto_delete_repost' aktif.
-    """
     if not get_bot_setting("auto_delete_repost", True):
         return
     for msg_id in msg_ids:
@@ -533,98 +522,8 @@ async def _process_deleted(client, channel_id: int, msg_ids: list):
             continue
         ok = await safe_delete(client, MAIN_CHANNEL_ID, post["main_msg_id"])
         if ok:
-            log.info(f"[delete_repost] ✅ main_msg_id={post['main_msg_id']} "
-                     f"dihapus (partner={channel_id} msg={msg_id})")
+            log.info(f"[delete_repost] ✅ main_msg_id={post['main_msg_id']} dihapus")
             log_activity("repost_deleted", channel_id, {"main_msg_id": post["main_msg_id"]})
+            delete_post(channel_id, msg_id)
         else:
             log.warning(f"[delete_repost] ❌ Gagal hapus main_msg_id={post['main_msg_id']}")
-        delete_post(channel_id, msg_id)
-
-
-
-# ═══════════════════════════════════════════════════════════
-#  SCHEDULER — UPDATE OWNER NAME HARIAN (jam 00:00 UTC)
-# ═══════════════════════════════════════════════════════════
-
-async def _update_owner_names(client: Client):
-    """
-    Iterasi semua partner channel, ambil nama terbaru owner dari Telegram,
-    bandingkan dengan DB — jika berubah, simpan.
-
-    Berjalan lambat tapi aman:
-    - 3 detik antar request normal
-    - Jika kena FloodWait, tunggu sesuai nilai + 5 detik
-    - Error lain (user privasi, deactivated dll) → skip diam-diam
-    """
-    partners = get_all_partners()
-    if not partners:
-        return
-
-    log.info(f"[owner_name_sync] Mulai sync {len(partners)} partner(s)...")
-    updated = 0
-
-    for p in partners:
-        owner_id = p.get("owner_id")
-        if not owner_id:
-            await asyncio.sleep(3)
-            continue
-
-        try:
-            user = await client.get_users(owner_id)
-            new_name = (user.first_name or "").strip()
-            if user.last_name:
-                new_name = f"{new_name} {user.last_name}".strip()
-            if not new_name:
-                new_name = user.username or "Unknown"
-
-            old_name = p.get("owner_name", "")
-            if new_name != old_name:
-                upsert_partner(p["_id"], {"owner_name": new_name})
-                log.info(
-                    f"[owner_name_sync] channel={p['_id']} "
-                    f"'{old_name}' → '{new_name}'"
-                )
-                updated += 1
-
-        except FloodWait as e:
-            wait = e.value + 5
-            log.warning(f"[owner_name_sync] FloodWait {wait}s, menunggu...")
-            await asyncio.sleep(wait)
-            # Jangan skip — coba lagi di iterasi berikutnya (next run)
-        except Exception as e:
-            log.debug(f"[owner_name_sync] Skip owner_id={owner_id}: {e}")
-
-        # Jeda aman antar request
-        await asyncio.sleep(3)
-
-    log.info(f"[owner_name_sync] Selesai — {updated} nama diperbarui.")
-
-
-async def _schedule_midnight_owner_sync(client: Client):
-    """
-    Loop selamanya: tunggu sampai jam 00:00 UTC berikutnya, lalu jalankan sync.
-    Menggunakan waktu nyata (bukan interval tetap) agar tidak drift.
-    """
-    while True:
-        now  = datetime.now(timezone.utc)
-        # Tengah malam UTC berikutnya
-        next_midnight = (now + timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        wait_seconds = (next_midnight - now).total_seconds()
-        log.info(
-            f"[owner_name_sync] Sync berikutnya dalam "
-            f"{int(wait_seconds // 3600)}j "
-            f"{int((wait_seconds % 3600) // 60)}m"
-        )
-        await asyncio.sleep(wait_seconds)
-        try:
-            await _update_owner_names(client)
-        except Exception as e:
-            log.error(f"[owner_name_sync] Error tak terduga: {e}")
-
-
-async def start_owner_name_scheduler(client: Client):
-    """Dipanggil sekali saat bot start dari main.py."""
-    asyncio.create_task(_schedule_midnight_owner_sync(client))
-    log.info("[owner_name_sync] Scheduler diaktifkan.")
