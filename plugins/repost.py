@@ -23,7 +23,7 @@ from config import MAIN_CHANNEL_ID, BOT_USERNAME
 from db.helpers import (
     get_partner, upsert_partner, save_post, get_post, delete_post,
     increment_partner_posts, contains_blacklisted, count_posts_by_partner,
-    get_notif_setting, log_activity,
+    get_notif_setting, log_activity, get_bot_setting,
 )
 from utils import safe_send, safe_delete, answer_cb
 
@@ -406,7 +406,11 @@ async def _lazy_check_channel(client: Client, channel_id: int):
 
 
 async def _process_deleted(client, channel_id: int, msg_ids: list):
-    """Cek DB dan hapus repost di channel utama untuk setiap msg_id yang dihapus."""
+    """Cek DB dan hapus repost di channel utama untuk setiap msg_id yang dihapus.
+    Hanya berjalan jika setting 'auto_delete_repost' aktif.
+    """
+    if not get_bot_setting("auto_delete_repost", True):
+        return
     for msg_id in msg_ids:
         post = get_post(channel_id, msg_id)
         if not post:
