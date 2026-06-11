@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from pyrogram import Client
+from pyrogram import Client, idle
 from config import API_ID, API_HASH, BOT_TOKEN
 from db.mongo import sessions_col, peers_col
 from db.mongo_storage import MongoStorage
@@ -37,9 +37,10 @@ if __name__ == "__main__":
     log.info("🤖 FessBot v2 starting...")
 
     async def _main():
-        async with app:
-            await start_owner_name_scheduler(app)
-            await asyncio.Event().wait()  # tunggu selamanya
+        await app.start()
+        await start_owner_name_scheduler(app)
+        await idle()
+        await app.stop()
 
     asyncio.run(_main())
     log.info("🤖 FessBot v2 stopped.")
