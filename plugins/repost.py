@@ -19,7 +19,7 @@ from pyrogram.types import (
 )
 from pyrogram.enums import ChatMemberStatus, ChatType, ParseMode
 from pyrogram.errors import FloodWait, ChatWriteForbidden, PeerIdInvalid, MessageIdInvalid
-from config import MAIN_CHANNEL_ID, BOT_USERNAME
+from config import MAIN_CHANNEL_ID
 from db.helpers import (
     get_partner, upsert_partner, save_post, get_post, delete_post,
     increment_partner_posts, contains_blacklisted, count_posts_by_partner,
@@ -36,26 +36,33 @@ PM  = ParseMode.MARKDOWN
 # ═══════════════════════════════════════════════════════════
 
 def build_caption(original_caption, channel_title, channel_username,
-                  owner_name, post_number, bot_username):
+                  owner_name, owner_id, post_number, bot_name, bot_username):
     now  = datetime.now(timezone.utc)
     date = now.strftime("%d %b %Y")
     time = now.strftime("%H:%M UTC")
 
+    # Channel asal — clickable link ke channel
     if channel_username:
-        ch_link = f"**{channel_title}** (@{channel_username})"
+        ch_link = f"[{channel_title}](https://t.me/{channel_username})"
     else:
         ch_link = f"**{channel_title}**"
+
+    # Owner — clickable link ke profil user (tg://user?id=...)
+    owner_link = f"[{owner_name}](tg://user?id={owner_id})"
+
+    # Via bot — nama bot dari sistem, clickable link start bot
+    bot_link = f"[{bot_name}](https://t.me/{bot_username}?start=start)"
 
     cap = f"{ch_link}\n"
     if original_caption:
         cap += f"\n{original_caption}\n"
     cap += (
         f"\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤  Owner   :  {owner_name}\n"
+        f"👤  Owner   :  {owner_link}\n"
         f"📅  Tanggal :  {date}\n"
         f"🕒  Jam     :  {time}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔁  via @{bot_username}"
+        f"🔁  via {bot_link}"
     )
     return cap.strip()
 
@@ -310,13 +317,21 @@ async def repost(client: Client, message: Message):
         return
 
     post_number = count_posts_by_partner(channel_id) + 1
+
+    # Ambil info bot dari sistem (bukan dari env)
+    me = await client.get_me()
+    bot_name_real = me.first_name or me.username or "Bot"
+    bot_uname_real = me.username or ""
+
     cap = build_caption(
         original_caption = caption_text,
         channel_title    = partner.get("channel_name", message.chat.title),
         channel_username = partner.get("username", ""),
         owner_name       = partner.get("owner_name", "Unknown"),
+        owner_id         = partner.get("owner_id", 0),
         post_number      = post_number,
-        bot_username     = BOT_USERNAME,
+        bot_name         = bot_name_real,
+        bot_username     = bot_uname_real,
     )
 
     # Hanya proses foto atau video (dengan atau tanpa caption)
@@ -335,7 +350,13 @@ async def repost(client: Client, message: Message):
     ]])
 
     sent = await safe_send(
-        message.copy(MAIN_CHANNEL_ID, caption=cap, reply_markup=btn, parse_mode=PM)
+        message.copy(
+            MAIN_CHANNEL_ID,
+            caption=cap,
+            reply_markup=btn,
+            parse_mode=PM,
+            disable_web_page_preview=True,
+        )
     )
 
     if sent:
