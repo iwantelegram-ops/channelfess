@@ -343,6 +343,9 @@ async def repost(client: Client, message: Message):
         increment_partner_posts(channel_id)
         log_activity("repost_success", channel_id, {"main_msg_id": sent.id})
 
+        # Lazy check: setiap ada post baru, sekalian cek post lama channel ini
+        asyncio.create_task(_lazy_check_channel(client, channel_id))
+
         owner_id = partner.get("owner_id")
         if owner_id:
             should_notify = get_notif_setting(owner_id, "repost_notif", True)
@@ -371,17 +374,35 @@ async def repost(client: Client, message: Message):
 
 @Client.on_raw_update()
 async def on_raw_delete(client: Client, update, users, chats):
-    # Log SEMUA raw update yang masuk untuk diagnosa
-    update_type = type(update).__name__
-    if "delete" in update_type.lower() or "Delete" in update_type:
-        log.info(f"[RAW_SPY] DELETE event: {update_type} | data={update}")
-
+    # Tetap ada sebagai lapisan pertama — bekerja jika Telegram suatu saat kirim event ini
     if not isinstance(update, raw.types.UpdateDeleteChannelMessages):
         return
     raw_channel_id = update.channel_id
     channel_id     = int(f"-100{raw_channel_id}")
     log.info(f"[raw_delete] channel={channel_id} msgs={update.messages}")
     await _process_deleted(client, channel_id, update.messages)
+
+
+async def _lazy_check_channel(client: Client, channel_id: int):
+    """
+    Dipanggil saat ada post baru dari channel_id.
+    Cek max 10 post lama dari channel ini — kalau sudah dihapus, hapus repostnya.
+    Tidak agresif: hanya jalan saat ada aktivitas di channel tersebut.
+    """
+    from db.helpers import get_recent_posts_by_partner
+    old_posts = get_recent_posts_by_partner(channel_id, limit=10)
+    if not old_posts:
+        return
+    for post in old_posts:
+        try:
+            msg = await client.get_messages(channel_id, post["partner_msg_id"])
+            if msg is None or msg.empty:
+                log.info(f"[lazy_check] Post {post['partner_msg_id']} sudah dihapus → hapus repost")
+                await _process_deleted(client, channel_id, [post["partner_msg_id"]])
+        except Exception:
+            # Tidak bisa akses → anggap sudah dihapus
+            await _process_deleted(client, channel_id, [post["partner_msg_id"]])
+        await asyncio.sleep(0.3)
 
 
 async def _process_deleted(client, channel_id: int, msg_ids: list):
