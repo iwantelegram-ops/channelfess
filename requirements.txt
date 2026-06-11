@@ -3,3 +3,4 @@ TgCrypto
 pymongo[srv]
 dnspython
 python-dotenv
+motor
