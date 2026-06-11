@@ -19,6 +19,20 @@ from db.helpers import (
 )
 from db.mongo import posts as posts_col
 from utils import check_membership, paginate, safe_edit, nav_to, store_msg, answer_cb
+from db.helpers import get_maintenance as _get_maintenance
+
+async def _check_maintenance(message):
+    from config import OWNER_ID
+    if message.from_user.id == OWNER_ID:
+        return False
+    maint = _get_maintenance()
+    if maint.get("active"):
+        reason = maint.get("reason", "Sedang dalam perbaikan.")
+        await message.reply(
+            "<b>Bot sedang maintenance</b>\n\n" + reason + "\n\nCoba lagi nanti!",
+        )
+        return True
+    return False
 
 log      = logging.getLogger("fessbot.mychannel")
 PM       = ParseMode.HTML
@@ -111,6 +125,8 @@ async def _show_channel_list(client, cb_or_msg, user_id: int,
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^📂 My Channel$"))
 async def my_channel_btn(client: Client, message: Message):
+    if await _check_maintenance(message):
+        return
     user_id = message.from_user.id
     joined  = await check_membership(client, user_id)
     if not joined:
@@ -480,6 +496,8 @@ async def cb_ch_remove_do(client: Client, cb: CallbackQuery):
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^📊 Statistik Saya$"))
 async def statistik_saya(client: Client, message: Message):
+    if await _check_maintenance(message):
+        return
     user_id  = message.from_user.id
     channels = get_partners_by_owner(user_id)
 
@@ -565,6 +583,8 @@ def _notif_text_and_markup(user_id: int):
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^🔔 Notifikasi$"))
 async def notifikasi_settings(client: Client, message: Message):
+    if await _check_maintenance(message):
+        return
     user_id = message.from_user.id
     text, markup = _notif_text_and_markup(user_id)
     await message.reply(text, reply_markup=markup, parse_mode=PM)
