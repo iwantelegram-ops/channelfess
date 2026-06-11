@@ -1,6 +1,8 @@
 """
-Callback: recheck join & notif user baru join channel utama.
+Callback recheck join + notif saat user baru join channel utama.
 """
+import logging
+from datetime import datetime, timezone
 from pyrogram import Client, filters
 from pyrogram.types import (
     CallbackQuery, ChatMemberUpdated,
@@ -8,25 +10,36 @@ from pyrogram.types import (
     ReplyKeyboardMarkup, KeyboardButton,
 )
 from pyrogram.errors import MessageNotModified
+from pyrogram.enums import ParseMode
 from config import MAIN_CHANNEL_ID, BOT_USERNAME
 from db.helpers import upsert_user, is_joined
 from utils import check_membership
-from datetime import datetime
 
-USER_JOINED_NOTIF = (
-    "🎉 **Welcome, {name}!**\n\n"
-    "Sekarang kamu bisa tautkan channelmu ke FessBot.\n\n"
-    "**Cara mulai:**\n"
-    "`1.` Tambahkan bot sebagai **Admin** di channelmu\n"
-    "`2.` Channel otomatis terdaftar sebagai partner\n"
-    "`3.` Foto/video di-repost ke channel utama real-time"
+log = logging.getLogger("fessbot.membership")
+PM  = ParseMode.HTML
+
+WELCOME_TEXT = (
+    "🎉 <b>Verifikasi berhasil!</b>\n\n"
+    "Selamat datang, <b>{name}</b>! 👋\n\n"
+    "Kamu sekarang bisa menghubungkan channel ke <b>FessBot</b> dan "
+    "foto/video di channelmu akan otomatis di-repost ke channel utama.\n\n"
+    "<b>Cara mulai:</b>\n"
+    "1️⃣ Tambahkan bot sebagai <b>Admin</b> di channelmu\n"
+    "2️⃣ Channel otomatis terdaftar\n"
+    "3️⃣ Konten di-repost real-time ✅\n\n"
+    "Ketuk <b>My Channel</b> untuk mulai."
 )
 
 def user_keyboard():
     return ReplyKeyboardMarkup(
-        [[KeyboardButton("📂 My Channel"), KeyboardButton("ℹ️ Info Bot")]],
+        [
+            [KeyboardButton("📂 My Channel"), KeyboardButton("📊 Statistik Saya")],
+            [KeyboardButton("🔔 Notifikasi"),  KeyboardButton("ℹ️ Info Bot")],
+            [KeyboardButton("❓ Bantuan")],
+        ],
         resize_keyboard=True,
     )
+
 
 @Client.on_callback_query(filters.regex("^recheck_join$"))
 async def recheck_join(client: Client, cb: CallbackQuery):
@@ -35,28 +48,40 @@ async def recheck_join(client: Client, cb: CallbackQuery):
     joined    = await check_membership(client, user_id)
 
     if joined:
-        upsert_user(user_id, {"joined": True, "joined_at": datetime.utcnow()})
+        upsert_user(user_id, {
+            "joined":    True,
+            "joined_at": datetime.now(timezone.utc),
+            "username":  cb.from_user.username or "",
+            "name":      user_name,
+        })
         try:
             await cb.message.edit_text(
-                USER_JOINED_NOTIF.format(name=user_name),
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("➕ Tambah Bot sebagai Admin",
-                        url=f"https://t.me/{BOT_USERNAME}?startchannel=true"
-                            f"&admin=post_messages+edit_messages+delete_messages+invite_users")],
-                ])
+                WELCOME_TEXT.format(name=user_name),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "➕ Tambah Bot sebagai Admin",
+                        url=(f"https://t.me/{BOT_USERNAME}?startchannel=true"
+                             f"&admin=post_messages+edit_messages+delete_messages+invite_users"),
+                    )
+                ]]),
+                parse_mode=PM,
             )
         except MessageNotModified:
             pass
-        # Kirim keyboard reply
-        await client.send_message(user_id, "Menu:", reply_markup=user_keyboard())
+        await client.send_message(user_id, "Menu kamu:", reply_markup=user_keyboard())
         await cb.answer("✅ Verified!", show_alert=False)
     else:
-        await cb.answer("Belum join nih. Join dulu terus cek ulang ya!", show_alert=True)
+        await cb.answer(
+            "Kamu belum join channel utama nih.\nJoin dulu, lalu cek ulang ya! 😊",
+            show_alert=True,
+        )
+
 
 @Client.on_chat_member_updated(filters.chat(MAIN_CHANNEL_ID))
 async def on_new_member(client: Client, update: ChatMemberUpdated):
     if not update.new_chat_member:
         return
+
     new_status = update.new_chat_member.status.value
     old_status = update.old_chat_member.status.value if update.old_chat_member else "left"
 
@@ -68,16 +93,25 @@ async def on_new_member(client: Client, update: ChatMemberUpdated):
         if is_joined(user_id):
             return
 
-        upsert_user(user_id, {"joined": True, "joined_at": datetime.utcnow()})
+        upsert_user(user_id, {
+            "joined":    True,
+            "joined_at": datetime.now(timezone.utc),
+            "username":  user.username or "",
+            "name":      name,
+        })
         try:
             await client.send_message(
                 user_id,
-                USER_JOINED_NOTIF.format(name=name),
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("➕ Tambah Bot sebagai Admin",
-                        url=f"https://t.me/{BOT_USERNAME}?startchannel=true"
-                            f"&admin=post_messages+edit_messages+delete_messages+invite_users")],
-                ])
+                WELCOME_TEXT.format(name=name),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "➕ Tambah Bot sebagai Admin",
+                        url=(f"https://t.me/{BOT_USERNAME}?startchannel=true"
+                             f"&admin=post_messages+edit_messages+delete_messages+invite_users"),
+                    )
+                ]]),
+                parse_mode=PM,
             )
-        except Exception:
-            pass
+            await client.send_message(user_id, "Menu kamu:", reply_markup=user_keyboard())
+        except Exception as e:
+            log.warning(f"[on_new_member] Gagal kirim pesan ke {user_id}: {e}")

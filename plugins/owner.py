@@ -1,40 +1,47 @@
 """
-Panel Owner — Dashboard, Stats, Partner list, Search, Broadcast,
-Blacklist, Maintenance, Pause/Run channel.
+Panel Owner — Dashboard, Stats, Partner list, Search, Blacklist,
+Maintenance, Aktivitas, Pengaturan.
 
 Sistem navigasi:
-  Semua navigasi menggunakan ReplyKeyboardMarkup (bottom tombol).
-  Keyboard berubah konteks sesuai panel aktif.
+  ReplyKeyboard di bawah layar berubah sesuai konteks (halaman aktif).
+  Konten panel di-edit di pesan yang sama, bukan pesan baru.
   Inline keyboard hanya untuk AKSI (pilih channel, paginasi).
-  Parse mode: HTML di seluruh file untuk menghindari entity offset bug.
+  Parse mode: HTML di seluruh file.
 """
 import asyncio
 import functools
+import logging
 from datetime import datetime, timezone
-from pyrogram import Client, filters, enums
+from pyrogram import Client, filters
 from pyrogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton,
 )
-from pyrogram.errors import MessageNotModified
+from pyrogram.enums import ParseMode
 from config import OWNER_ID
 from db.helpers import (
     get_partner, upsert_partner, get_all_partners, get_active_partners,
-    count_partners, search_partners,
+    count_partners, search_partners, get_top_partners,
     get_blacklist, add_blacklist, remove_blacklist,
     set_maintenance, get_maintenance,
-    get_all_user_ids, get_posts_today,
+    count_users,
+    get_posts_today, get_posts_this_week, get_posts_this_month,
+    get_recent_activity,
+    get_bot_setting, set_bot_setting,
+    count_posts_by_partner,
 )
 from db.mongo import posts, users
-from utils import paginate
+from utils import paginate, safe_edit, nav_to, store_msg, progress_bar
 
+log      = logging.getLogger("fessbot.owner")
+PM       = ParseMode.HTML
 PAGE_SIZE = 8
-PM = enums.ParseMode.HTML
 
-# ══════════════════════════════════════════════════════════
-#  DEKORATOR & UTILITAS
-# ══════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════
+#  DEKORATOR
+# ═══════════════════════════════════════════════════════════
 
 def owner_only(func):
     @functools.wraps(func)
@@ -43,360 +50,203 @@ def owner_only(func):
         if uid != OWNER_ID:
             if hasattr(obj, "answer"):
                 await obj.answer("🚫 Bukan owner.", show_alert=True)
-            else:
-                await obj.reply("🚫 Akses ditolak.")
             return
         return await func(client, obj, *args, **kwargs)
     return wrapper
 
-async def safe_edit(msg, text, markup=None):
-    try:
-        await msg.edit_text(text, reply_markup=markup, parse_mode=PM)
-    except MessageNotModified:
-        pass
 
-def _bar(val, total, width=10):
-    if total == 0:
-        return "░" * width
-    filled = round((val / total) * width)
-    return "█" * filled + "░" * (width - filled)
-
-async def _reply(source, text, markup=None):
-    """Helper reply dengan HTML parse mode."""
-    return await source.reply(text, reply_markup=markup, parse_mode=PM)
-
-async def _send(client, chat_id, text, markup=None):
-    """Helper send_message dengan HTML parse mode."""
-    return await client.send_message(chat_id, text, reply_markup=markup, parse_mode=PM)
-
-
-# ══════════════════════════════════════════════════════════
-#  REPLY KEYBOARD DINAMIS (konteks navigasi)
-# ══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+#  REPLY KEYBOARDS (konteks navigasi)
+# ═══════════════════════════════════════════════════════════
 
 def kb_main():
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("📊 Dashboard"), KeyboardButton("📋 Partner")],
-            [KeyboardButton("📣 Broadcast"), KeyboardButton("🔧 Tools")],
-        ],
-        resize_keyboard=True,
-    )
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("📊 Dashboard"),   KeyboardButton("📋 Partner")],
+        [KeyboardButton("📣 Broadcast"),   KeyboardButton("🔧 Tools")],
+        [KeyboardButton("📝 Aktivitas"),   KeyboardButton("⚙️ Pengaturan")],
+    ], resize_keyboard=True)
 
 def kb_partner():
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("🔎 Cari Channel"), KeyboardButton("🔄 Refresh Partner")],
-            [KeyboardButton("🏠 Menu Utama")],
-        ],
-        resize_keyboard=True,
-    )
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("🔎 Cari Channel"), KeyboardButton("🔄 Refresh Partner")],
+        [KeyboardButton("🏆 Top Channel"),  KeyboardButton("🏠 Menu Utama")],
+    ], resize_keyboard=True)
 
 def kb_tools():
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("🚫 Blacklist"), KeyboardButton("🔧 Maintenance")],
-            [KeyboardButton("🔎 Cari Channel"), KeyboardButton("🏠 Menu Utama")],
-        ],
-        resize_keyboard=True,
-    )
-
-def kb_broadcast():
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("👥 Broadcast Semua"), KeyboardButton("📡 Broadcast Partner")],
-            [KeyboardButton("🏠 Menu Utama")],
-        ],
-        resize_keyboard=True,
-    )
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("🚫 Blacklist"),     KeyboardButton("🔧 Maintenance")],
+        [KeyboardButton("🔎 Cari Channel"),  KeyboardButton("🏠 Menu Utama")],
+    ], resize_keyboard=True)
 
 def kb_blacklist():
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("🔄 Refresh Blacklist")],
-            [KeyboardButton("🔧 Tools"), KeyboardButton("🏠 Menu Utama")],
-        ],
-        resize_keyboard=True,
-    )
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("➕ Tambah Kata"),   KeyboardButton("➖ Hapus Kata")],
+        [KeyboardButton("🔄 Refresh BL"),   KeyboardButton("🔧 Tools")],
+        [KeyboardButton("🏠 Menu Utama")],
+    ], resize_keyboard=True)
 
 def kb_maintenance():
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("🔴 Aktifkan Maintenance"), KeyboardButton("🟢 Nonaktifkan Maintenance")],
-            [KeyboardButton("🔧 Tools"), KeyboardButton("🏠 Menu Utama")],
-        ],
-        resize_keyboard=True,
-    )
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("🔴 Aktifkan Maintenance"), KeyboardButton("🟢 Nonaktifkan Maintenance")],
+        [KeyboardButton("🔧 Tools"),                KeyboardButton("🏠 Menu Utama")],
+    ], resize_keyboard=True)
 
 def kb_search():
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("❌ Batal Cari")],
-            [KeyboardButton("🏠 Menu Utama")],
-        ],
-        resize_keyboard=True,
-    )
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("❌ Batal Cari")],
+        [KeyboardButton("🏠 Menu Utama")],
+    ], resize_keyboard=True)
 
 def kb_detail_channel(paused: bool):
     aksi = "▶️ Aktifkan Channel" if paused else "⏸ Pause Channel"
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton(aksi)],
-            [KeyboardButton("◀️ Daftar Partner"), KeyboardButton("🏠 Menu Utama")],
-        ],
-        resize_keyboard=True,
-    )
+    return ReplyKeyboardMarkup([
+        [KeyboardButton(aksi)],
+        [KeyboardButton("◀️ Daftar Partner"), KeyboardButton("🏠 Menu Utama")],
+    ], resize_keyboard=True)
 
-# State
+def kb_settings():
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("🔄 Refresh Settings")],
+        [KeyboardButton("🏠 Menu Utama")],
+    ], resize_keyboard=True)
+
+def kb_bl_add():
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("❌ Batal")],
+        [KeyboardButton("🚫 Blacklist"), KeyboardButton("🏠 Menu Utama")],
+    ], resize_keyboard=True)
+
+def kb_aktivitas():
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("🔄 Refresh Aktivitas")],
+        [KeyboardButton("🏠 Menu Utama")],
+    ], resize_keyboard=True)
+
+
+# ── State ──────────────────────────────────────────────────
 _viewing_channel: dict[int, int] = {}
 _search_pending:  set[int]       = set()
+_bl_add_pending:  set[int]       = set()
+_bl_del_pending:  set[int]       = set()
 
 
-# ══════════════════════════════════════════════════════════
-#  HANDLER TOMBOL — Menu Utama
-# ══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+#  NAV HELPER — edit pesan terakhir atau kirim baru
+# ═══════════════════════════════════════════════════════════
 
-@Client.on_message(filters.text & filters.private & filters.regex("^🏠 Menu Utama$"))
+async def _nav(client, message: Message, text: str,
+               inline_markup=None, reply_kb=None):
+    """Edit pesan sebelumnya atau kirim baru, lalu update reply keyboard."""
+    uid = message.from_user.id
+    msg = await nav_to(client, uid, message.chat.id, text,
+                       inline_markup=inline_markup, parse_mode=PM)
+    if not msg:
+        msg = await message.reply(text, reply_markup=inline_markup or reply_kb,
+                                  parse_mode=PM)
+        store_msg(uid, msg)
+    # Kirim keyboard reply secara terpisah agar tidak konflik dengan inline
+    if reply_kb:
+        await client.send_message(message.chat.id, "ᅠ", reply_markup=reply_kb)
+    return msg
+
+
+# ═══════════════════════════════════════════════════════════
+#  🏠 MENU UTAMA
+# ═══════════════════════════════════════════════════════════
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^🏠 Menu Utama$"))
 @owner_only
-async def kb_menu_utama(client, message):
-    _viewing_channel.pop(message.from_user.id, None)
-    await _reply(message, "⚡ <b>Control Panel</b>\n\nPilih menu:", kb_main())
+async def kb_menu_utama(client: Client, message: Message):
+    uid = message.from_user.id
+    _viewing_channel.pop(uid, None)
+    _search_pending.discard(uid)
+    _bl_add_pending.discard(uid)
+    _bl_del_pending.discard(uid)
 
-@Client.on_message(filters.text & filters.private & filters.regex("^📊 Dashboard$"))
-@owner_only
-async def kb_dashboard(client, message):
-    await _send_stats(client, message)
-
-@Client.on_message(filters.text & filters.private & filters.regex("^📋 Partner$"))
-@owner_only
-async def kb_partner_btn(client, message):
-    await _send_partner_list(client, message, page=0)
-
-@Client.on_message(filters.text & filters.private & filters.regex("^📣 Broadcast$"))
-@owner_only
-async def kb_broadcast_btn(client, message):
-    await _send_broadcast_menu(client, message)
-
-@Client.on_message(filters.text & filters.private & filters.regex("^🔧 Tools$"))
-@owner_only
-async def kb_tools_btn(client, message):
-    await _send_tools_menu(client, message)
-
-
-# ══════════════════════════════════════════════════════════
-#  HANDLER TOMBOL — Partner
-# ══════════════════════════════════════════════════════════
-
-@Client.on_message(filters.text & filters.private & filters.regex("^🔄 Refresh Partner$"))
-@owner_only
-async def kb_refresh_partner(client, message):
-    await _send_partner_list(client, message, page=0)
-
-@Client.on_message(filters.text & filters.private & filters.regex("^◀️ Daftar Partner$"))
-@owner_only
-async def kb_back_to_partner(client, message):
-    _viewing_channel.pop(message.from_user.id, None)
-    await _send_partner_list(client, message, page=0)
-
-
-# ══════════════════════════════════════════════════════════
-#  HANDLER TOMBOL — Tools
-# ══════════════════════════════════════════════════════════
-
-@Client.on_message(filters.text & filters.private & filters.regex("^🚫 Blacklist$"))
-@owner_only
-async def kb_blacklist_btn(client, message):
-    await _send_blacklist_menu(client, message)
-
-@Client.on_message(filters.text & filters.private & filters.regex("^🔧 Maintenance$"))
-@owner_only
-async def kb_maintenance_btn(client, message):
-    await _send_maintenance_menu(client, message)
-
-@Client.on_message(filters.text & filters.private & filters.regex("^🔄 Refresh Blacklist$"))
-@owner_only
-async def kb_refresh_blacklist(client, message):
-    await _send_blacklist_menu(client, message)
-
-
-# ══════════════════════════════════════════════════════════
-#  HANDLER TOMBOL — Maintenance
-# ══════════════════════════════════════════════════════════
-
-@Client.on_message(filters.text & filters.private & filters.regex("^🔴 Aktifkan Maintenance$"))
-@owner_only
-async def kb_maint_on(client, message):
-    set_maintenance(True, "Bot sedang dalam perbaikan. Harap tunggu.")
-    text, _ = _maintenance_text()
-    await _reply(message, text, kb_maintenance())
-
-@Client.on_message(filters.text & filters.private & filters.regex("^🟢 Nonaktifkan Maintenance$"))
-@owner_only
-async def kb_maint_off_btn(client, message):
-    set_maintenance(False, "")
-    text, _ = _maintenance_text()
-    await _reply(message, text, kb_maintenance())
-
-
-# ══════════════════════════════════════════════════════════
-#  HANDLER TOMBOL — Broadcast
-# ══════════════════════════════════════════════════════════
-
-@Client.on_message(filters.text & filters.private & filters.regex("^👥 Broadcast Semua$"))
-@owner_only
-async def kb_broadcast_all(client, message):
-    total = users.count_documents({})
-    await _reply(
-        message,
-        f"📣 <b>Broadcast ke Semua User</b>\n\n"
-        f"Total user: <code>{total}</code>\n\n"
-        f"Gunakan perintah:\n<code>/broadcast &lt;pesan&gt;</code>",
-        kb_broadcast()
+    total_p  = count_partners()
+    active_p = len(get_active_partners())
+    total_r  = posts.count_documents({})
+    today    = get_posts_today()
+    text = (
+        f"⚡ <b>FessBot v2 — Control Panel</b>\n"
+        f"<code>{'─' * 28}</code>\n\n"
+        f"📡 Partner   <code>{active_p}</code> aktif · <code>{total_p}</code> total\n"
+        f"📦 Hari ini  <code>{today}</code> repost · All-time <code>{total_r}</code>\n\n"
+        f"Pilih menu: 👇"
     )
-
-@Client.on_message(filters.text & filters.private & filters.regex("^📡 Broadcast Partner$"))
-@owner_only
-async def kb_broadcast_partner_btn(client, message):
-    total_p = len({p["owner_id"] for p in get_all_partners() if p.get("owner_id")})
-    await _reply(
-        message,
-        f"📡 <b>Broadcast ke Owner Partner</b>\n\n"
-        f"Total owner partner: <code>{total_p}</code>\n\n"
-        f"Gunakan perintah:\n<code>/broadcastpartner &lt;pesan&gt;</code>",
-        kb_broadcast()
-    )
+    msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
+    if not msg:
+        msg = await message.reply(text, reply_markup=kb_main(), parse_mode=PM)
+        store_msg(uid, msg)
+    await message.reply("⬇️", reply_markup=kb_main())
 
 
-# ══════════════════════════════════════════════════════════
-#  HANDLER TOMBOL — Detail Channel (Pause/Run)
-# ══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+#  📊 DASHBOARD
+# ═══════════════════════════════════════════════════════════
 
-@Client.on_message(filters.text & filters.private & filters.regex("^⏸ Pause Channel$"))
-@owner_only
-async def kb_pause_channel(client, message):
-    uid        = message.from_user.id
-    channel_id = _viewing_channel.get(uid)
-    if not channel_id:
-        await _reply(message, "⚠️ Tidak ada channel yang sedang dilihat.", kb_main())
-        return
-    partner = get_partner(channel_id)
-    if not partner:
-        await _reply(message, "❌ Channel tidak ditemukan.", kb_main())
-        return
-    upsert_partner(channel_id, {"paused": True, "reason": "Dijeda oleh admin"})
-    if oid := partner.get("owner_id"):
-        try:
-            await _send(client, oid,
-                f"⏸ <b>Channel dijeda oleh admin.</b>\n\n"
-                f"📡 <b>{partner.get('channel_name')}</b>\nHubungi admin untuk info lanjut."
-            )
-        except Exception:
-            pass
-    await _reply(message, f"✅ Channel <b>{partner.get('channel_name')}</b> dijeda.")
-    await _send_partner_detail(client, message, channel_id)
+def _dashboard_text():
+    total_p  = count_partners()
+    all_p    = get_all_partners()
+    paused   = len([p for p in all_p if p.get("paused")])
+    active   = total_p - paused
+    total_u  = count_users()
+    today    = get_posts_today()
+    week     = get_posts_this_week()
+    month    = get_posts_this_month()
+    total_r  = posts.count_documents({})
+    pct_a    = round(active / total_p * 100) if total_p else 0
+    pct_p    = round(paused / total_p * 100) if total_p else 0
 
-@Client.on_message(filters.text & filters.private & filters.regex("^▶️ Aktifkan Channel$"))
-@owner_only
-async def kb_run_channel(client, message):
-    uid        = message.from_user.id
-    channel_id = _viewing_channel.get(uid)
-    if not channel_id:
-        await _reply(message, "⚠️ Tidak ada channel yang sedang dilihat.", kb_main())
-        return
-    partner = get_partner(channel_id)
-    if not partner:
-        await _reply(message, "❌ Channel tidak ditemukan.", kb_main())
-        return
-    upsert_partner(channel_id, {"paused": False, "reason": ""})
-    if oid := partner.get("owner_id"):
-        try:
-            await _send(client, oid,
-                f"▶️ <b>Channel aktif kembali!</b>\n\n"
-                f"📡 <b>{partner.get('channel_name')}</b>\nRepost sudah berjalan lagi. 🚀"
-            )
-        except Exception:
-            pass
-    await _reply(message, f"✅ Channel <b>{partner.get('channel_name')}</b> aktif kembali.")
-    await _send_partner_detail(client, message, channel_id)
-
-
-# ══════════════════════════════════════════════════════════
-#  HANDLER TOMBOL — Cari Channel
-# ══════════════════════════════════════════════════════════
-
-@Client.on_message(filters.text & filters.private & filters.regex("^🔎 Cari Channel$"))
-@owner_only
-async def kb_search_btn(client, message):
-    _search_pending.add(message.from_user.id)
-    await _reply(
-        message,
-        "🔎 <b>Cari Channel Partner</b>\n\nKetik nama atau username channel:",
-        kb_search()
-    )
-
-@Client.on_message(filters.text & filters.private & filters.regex("^❌ Batal Cari$"))
-@owner_only
-async def kb_cancel_search(client, message):
-    _search_pending.discard(message.from_user.id)
-    await _reply(message, "Pencarian dibatalkan.", kb_main())
-
-
-# ══════════════════════════════════════════════════════════
-#  DASHBOARD / STATS
-# ══════════════════════════════════════════════════════════
-
-def _stats_text():
-    total_p     = count_partners()
-    total_posts = posts.count_documents({})
-    total_users = users.count_documents({})
-    all_p       = get_all_partners()
-    paused      = len([p for p in all_p if p.get("paused")])
-    active      = total_p - paused
-    today       = get_posts_today()
-    pct_a       = round(active / total_p * 100) if total_p else 0
+    top5 = get_top_partners(5)
+    top_lines = []
+    for i, ch in enumerate(top5, 1):
+        icon = "▶️" if not ch.get("paused") else "⏸"
+        top_lines.append(
+            f"  {i}. {icon} <b>{ch.get('channel_name','?')}</b>"
+            f"  <code>{ch.get('total_posts',0)}</code>"
+        )
+    top_block = "\n".join(top_lines) if top_lines else "  —"
 
     return (
-        f"📊 <b>Dashboard FessBot</b>\n"
-        f"<code>{'─' * 26}</code>\n\n"
-        f"👥 <b>Users</b>  <code>{total_users}</code>\n\n"
+        f"📊 <b>Dashboard FessBot v2</b>\n"
+        f"<code>{'─' * 28}</code>\n\n"
+        f"👥 <b>Users</b>   <code>{total_u}</code>\n\n"
         f"📡 <b>Channel Partner</b>\n"
-        f"  ▶️ Aktif    {_bar(active, total_p)} <code>{active}</code> · {pct_a}%\n"
-        f"  ⏸ Paused   {_bar(paused, total_p)} <code>{paused}</code>\n"
-        f"  Total      <code>{total_p}</code>\n\n"
+        f"  ▶️ Aktif   {progress_bar(active, total_p)}  "
+        f"<code>{active}</code> ({pct_a}%)\n"
+        f"  ⏸ Paused  {progress_bar(paused, total_p)}  "
+        f"<code>{paused}</code> ({pct_p}%)\n"
+        f"  Total     <code>{total_p}</code>\n\n"
         f"📦 <b>Repost</b>\n"
-        f"  Hari ini  <code>{today}</code>\n"
-        f"  All-time  <code>{total_posts}</code>\n"
+        f"  Hari ini   <code>{today}</code>\n"
+        f"  7 hari     <code>{week}</code>\n"
+        f"  30 hari    <code>{month}</code>\n"
+        f"  All-time   <code>{total_r}</code>\n\n"
+        f"🏆 <b>Top Channel</b>\n"
+        f"{top_block}"
     )
 
-async def _send_stats(client, source):
-    await _reply(source, _stats_text(), kb_main())
+@Client.on_message(filters.text & filters.private & filters.regex(r"^📊 Dashboard$"))
+@owner_only
+async def kb_dashboard(client: Client, message: Message):
+    uid  = message.from_user.id
+    text = _dashboard_text()
+    msg  = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
+    if not msg:
+        msg = await message.reply(text, parse_mode=PM)
+        store_msg(uid, msg)
+
 
 @Client.on_message(filters.command("stats") & filters.private)
 @owner_only
-async def cmd_stats(client, message):
-    await _send_stats(client, message)
+async def cmd_stats(client: Client, message: Message):
+    await message.reply(_dashboard_text(), parse_mode=PM)
 
 
-# ══════════════════════════════════════════════════════════
-#  TOOLS MENU
-# ══════════════════════════════════════════════════════════
-
-async def _send_tools_menu(client, source):
-    maint  = get_maintenance()
-    bl     = get_blacklist()
-    status = "🔴 Maintenance aktif" if maint.get("active") else "🟢 Normal"
-    text   = (
-        f"🔧 <b>Tools</b>\n"
-        f"<code>{'─' * 26}</code>\n\n"
-        f"Status bot   {status}\n"
-        f"Blacklist    <code>{len(bl)}</code> kata\n"
-    )
-    await _reply(source, text, kb_tools())
-
-
-# ══════════════════════════════════════════════════════════
-#  PARTNER LIST
-# ══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+#  📋 PARTNER LIST
+# ═══════════════════════════════════════════════════════════
 
 def _partner_list_text_and_rows(all_p, page):
     chunk, total_pages = paginate(all_p, page, PAGE_SIZE)
@@ -411,448 +261,692 @@ def _partner_list_text_and_rows(all_p, page):
         )
     text = "\n\n".join(lines)
 
-    rows = []
-    for ch in chunk:
-        icon = "▶️" if not ch.get("paused") else "⏸"
-        rows.append([InlineKeyboardButton(
-            f"{icon}  {ch.get('channel_name','?')}",
-            callback_data=f"owner_ch_{ch['_id']}"
-        )])
+    rows = [[InlineKeyboardButton(
+        f"{'▶️' if not ch.get('paused') else '⏸'}  {ch.get('channel_name','?')}",
+        callback_data=f"owner_ch_{ch['_id']}",
+    )] for ch in chunk]
 
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"list_partner_{page-1}"))
     if total_pages > 1:
-        nav_page = []
-        if page > 0:
-            nav_page.append(InlineKeyboardButton("◀️", callback_data=f"list_partner_{page-1}"))
-        nav_page.append(InlineKeyboardButton(f"{page+1} / {total_pages}", callback_data="noop"))
-        if page < total_pages - 1:
-            nav_page.append(InlineKeyboardButton("▶️", callback_data=f"list_partner_{page+1}"))
-        rows.append(nav_page)
+        nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"list_partner_{page+1}"))
+    if nav:
+        rows.append(nav)
 
     return text, rows
 
 async def _send_partner_list(client, source, page: int):
     all_p = get_all_partners()
+    uid   = source.from_user.id
+
     if not all_p:
-        await _reply(source, "📋 <b>Channel Partner</b>\n\nBelum ada partner terdaftar.", kb_partner())
+        text = "📋 <b>Channel Partner</b>\n\nBelum ada partner terdaftar."
+        msg  = await nav_to(client, uid, source.chat.id, text, parse_mode=PM)
+        if not msg:
+            msg = await source.reply(text, parse_mode=PM)
+            store_msg(uid, msg)
+        await source.reply("⬇️", reply_markup=kb_partner())
         return
 
     text, rows = _partner_list_text_and_rows(all_p, page)
-    await _reply(source, text, InlineKeyboardMarkup(rows) if rows else None)
-    await _send(client, source.chat.id, "Pilih channel atau gunakan menu:", kb_partner())
+    markup = InlineKeyboardMarkup(rows) if rows else None
+    msg = await nav_to(client, uid, source.chat.id, text,
+                       inline_markup=markup, parse_mode=PM)
+    if not msg:
+        msg = await source.reply(text, reply_markup=markup, parse_mode=PM)
+        store_msg(uid, msg)
+    await source.reply("⬇️", reply_markup=kb_partner())
+
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^📋 Partner$"))
+@owner_only
+async def kb_partner_btn(client: Client, message: Message):
+    await _send_partner_list(client, message, page=0)
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^🔄 Refresh Partner$"))
+@owner_only
+async def kb_refresh_partner(client: Client, message: Message):
+    await _send_partner_list(client, message, page=0)
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^◀️ Daftar Partner$"))
+@owner_only
+async def kb_back_to_partner(client: Client, message: Message):
+    _viewing_channel.pop(message.from_user.id, None)
+    await _send_partner_list(client, message, page=0)
 
 @Client.on_message(filters.command("listpartner") & filters.private)
 @owner_only
-async def cmd_listpartner(client, message):
+async def cmd_listpartner(client: Client, message: Message):
     await _send_partner_list(client, message, page=0)
 
 @Client.on_callback_query(filters.regex(r"^list_partner_(\d+)$"))
 @owner_only
-async def cb_listpartner(client, cb):
+async def cb_listpartner(client: Client, cb: CallbackQuery):
     page  = int(cb.matches[0].group(1))
     all_p = get_all_partners()
     if not all_p:
-        await safe_edit(cb.message, "📋 <b>Channel Partner</b>\n\nBelum ada partner terdaftar.")
+        await safe_edit(cb.message, "Belum ada partner.", parse_mode=PM)
         await cb.answer()
         return
     text, rows = _partner_list_text_and_rows(all_p, page)
-    await safe_edit(cb.message, text, InlineKeyboardMarkup(rows) if rows else None)
+    await safe_edit(cb.message, text, markup=InlineKeyboardMarkup(rows), parse_mode=PM)
     await cb.answer()
 
 
-# ══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+#  🏆 TOP CHANNEL
+# ═══════════════════════════════════════════════════════════
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^🏆 Top Channel$"))
+@owner_only
+async def kb_top_channel(client: Client, message: Message):
+    uid  = message.from_user.id
+    top  = get_top_partners(10)
+    if not top:
+        text = "🏆 <b>Top Channel</b>\n\nBelum ada data repost."
+    else:
+        lines = ["🏆 <b>Top 10 Channel (all-time repost)</b>\n<code>─────────────────────────</code>\n"]
+        for i, ch in enumerate(top, 1):
+            icon  = "▶️" if not ch.get("paused") else "⏸"
+            rp    = ch.get("total_posts", 0)
+            uname = f"@{ch['username']}" if ch.get("username") else ""
+            lines.append(
+                f"{i:2}. {icon} <b>{ch.get('channel_name','?')}</b>  "
+                f"{uname}  <code>{rp}</code> repost"
+            )
+        text = "\n".join(lines)
+
+    msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
+    if not msg:
+        msg = await message.reply(text, parse_mode=PM)
+        store_msg(uid, msg)
+
+
+# ═══════════════════════════════════════════════════════════
 #  DETAIL CHANNEL (owner view)
-# ══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
 
 async def _send_partner_detail(client, source, channel_id: int):
-    from db.helpers import count_posts_by_partner
     partner = get_partner(channel_id)
     if not partner:
         if hasattr(source, "answer"):
             await source.answer("Channel tidak ditemukan.", show_alert=True)
-        else:
-            await _reply(source, "❌ Channel tidak ditemukan.", kb_main())
         return
 
     uid = source.from_user.id if hasattr(source, "from_user") else OWNER_ID
     _viewing_channel[uid] = channel_id
 
-    paused    = partner.get("paused", False)
-    status    = "▶️ Aktif" if not paused else "⏸ Dijeda"
-    uname     = f"@{partner['username']}" if partner.get("username") else "—"
-    reason    = partner.get("reason", "")
-    rp_count  = count_posts_by_partner(channel_id)
-    added     = partner.get("added_at")
-    added_str = added.strftime("%d %b %Y") if added else "—"
+    paused   = partner.get("paused", False)
+    status   = "▶️ Aktif" if not paused else "⏸ Dijeda"
+    uname    = f"@{partner['username']}" if partner.get("username") else "—"
+    reason   = partner.get("reason", "")
+    rp       = count_posts_by_partner(channel_id)
+    added    = partner.get("added_at")
+    added_s  = added.strftime("%d %b %Y") if added else "—"
+    owner_id = partner.get("owner_id")
+    owner_un = partner.get("owner_name", "?")
 
     text = (
         f"📡 <b>{partner.get('channel_name', channel_id)}</b>\n"
-        f"<code>{'─' * 26}</code>\n"
-        f"Username  {uname}\n"
-        f"Owner     {partner.get('owner_name','?')}\n"
-        f"Status    {status}\n"
-        f"Repost    <code>{rp_count}</code> kali\n"
-        f"Daftar    {added_str}\n"
+        f"<code>{'─' * 26}</code>\n\n"
+        f"Username    {uname}\n"
+        f"Owner       <b>{owner_un}</b>"
+        + (f"  (<code>{owner_id}</code>)" if owner_id else "") + "\n"
+        f"Status      {status}\n"
+        f"Repost      <code>{rp}</code> kali\n"
+        f"Terdaftar   {added_s}\n"
     )
     if reason:
         text += f"\n⚠️ <i>{reason}</i>\n"
 
     if hasattr(source, "message"):
-        # dari callback — edit pesan inline lama, lalu kirim keyboard baru
-        await safe_edit(source.message, text)
-        await _send(client, source.message.chat.id,
-            f"Aksi untuk <b>{partner.get('channel_name')}</b>:",
-            kb_detail_channel(paused)
+        # Dari callback
+        await safe_edit(source.message, text, parse_mode=PM)
+        uid2 = source.from_user.id
+        await client.send_message(
+            source.message.chat.id, "⬇️",
+            reply_markup=kb_detail_channel(paused)
         )
     else:
-        await _reply(source, text, kb_detail_channel(paused))
+        msg = await nav_to(client, uid, source.chat.id, text, parse_mode=PM)
+        if not msg:
+            msg = await source.reply(text, parse_mode=PM)
+            store_msg(uid, msg)
+        await source.reply("⬇️", reply_markup=kb_detail_channel(paused))
+
 
 @Client.on_callback_query(filters.regex(r"^owner_ch_(-?\d+)$"))
 @owner_only
-async def cb_owner_ch_detail(client, cb):
-    channel_id = int(cb.matches[0].group(1))
-    await _send_partner_detail(client, cb, channel_id)
+async def cb_owner_ch_detail(client: Client, cb: CallbackQuery):
+    await _send_partner_detail(client, cb, int(cb.matches[0].group(1)))
     await cb.answer()
 
-@Client.on_callback_query(filters.regex(r"^owner_pause_(-?\d+)$"))
+
+# ═══════════════════════════════════════════════════════════
+#  PAUSE / RUN DARI REPLY KEYBOARD
+# ═══════════════════════════════════════════════════════════
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^⏸ Pause Channel$"))
 @owner_only
-async def cb_owner_pause(client, cb):
-    channel_id = int(cb.matches[0].group(1))
-    partner    = get_partner(channel_id)
+async def kb_pause_channel(client: Client, message: Message):
+    uid        = message.from_user.id
+    channel_id = _viewing_channel.get(uid)
+    if not channel_id:
+        await message.reply("⚠️ Tidak ada channel yang sedang dilihat.", reply_markup=kb_main())
+        return
+    partner = get_partner(channel_id)
     if not partner:
-        await cb.answer("Channel tidak ditemukan.", show_alert=True)
+        await message.reply("❌ Channel tidak ditemukan.", reply_markup=kb_main())
         return
     upsert_partner(channel_id, {"paused": True, "reason": "Dijeda oleh admin"})
-    if oid := partner.get("owner_id"):
+    oid = partner.get("owner_id")
+    if oid:
         try:
-            await _send(client, oid,
+            await client.send_message(
+                oid,
                 f"⏸ <b>Channel dijeda oleh admin.</b>\n\n"
-                f"📡 <b>{partner.get('channel_name')}</b>\nHubungi admin untuk info lanjut."
+                f"📡 <b>{partner.get('channel_name')}</b>\n"
+                f"Hubungi admin untuk informasi lebih lanjut.",
+                parse_mode=PM,
             )
         except Exception:
             pass
-    await cb.answer("⏸ Dijeda", show_alert=False)
-    await _send_partner_detail(client, cb, channel_id)
+    await _send_partner_detail(client, message, channel_id)
 
-@Client.on_callback_query(filters.regex(r"^owner_run_(-?\d+)$"))
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^▶️ Aktifkan Channel$"))
 @owner_only
-async def cb_owner_run(client, cb):
-    channel_id = int(cb.matches[0].group(1))
-    partner    = get_partner(channel_id)
+async def kb_run_channel(client: Client, message: Message):
+    uid        = message.from_user.id
+    channel_id = _viewing_channel.get(uid)
+    if not channel_id:
+        await message.reply("⚠️ Tidak ada channel yang sedang dilihat.", reply_markup=kb_main())
+        return
+    partner = get_partner(channel_id)
     if not partner:
-        await cb.answer("Channel tidak ditemukan.", show_alert=True)
+        await message.reply("❌ Channel tidak ditemukan.", reply_markup=kb_main())
         return
     upsert_partner(channel_id, {"paused": False, "reason": ""})
-    if oid := partner.get("owner_id"):
+    oid = partner.get("owner_id")
+    if oid:
         try:
-            await _send(client, oid,
+            await client.send_message(
+                oid,
                 f"▶️ <b>Channel aktif kembali!</b>\n\n"
-                f"📡 <b>{partner.get('channel_name')}</b>\nRepost sudah berjalan lagi. 🚀"
+                f"📡 <b>{partner.get('channel_name')}</b>\n"
+                f"Repost sudah berjalan lagi. 🚀",
+                parse_mode=PM,
             )
         except Exception:
             pass
-    await cb.answer("▶️ Diaktifkan", show_alert=False)
-    await _send_partner_detail(client, cb, channel_id)
+    await _send_partner_detail(client, message, channel_id)
 
-# ── Pause/Run via command ──────────────────────────────────
-@Client.on_message(filters.command("pause") & filters.private)
+
+# ═══════════════════════════════════════════════════════════
+#  🔎 CARI CHANNEL
+# ═══════════════════════════════════════════════════════════
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^🔎 Cari Channel$"))
 @owner_only
-async def cmd_pause(client, message):
-    parts = message.text.split(None, 2)
-    if len(parts) < 3:
-        await _reply(message, "<b>Format:</b> <code>/pause &lt;ID&gt; &lt;alasan&gt;</code>")
-        return
-    try:
-        channel_id = int(parts[1])
-    except ValueError:
-        await _reply(message, "❌ ID harus angka.")
-        return
-    partner = get_partner(channel_id)
-    if not partner:
-        await _reply(message, "❌ Channel tidak ditemukan.")
-        return
-    reason = parts[2]
-    upsert_partner(channel_id, {"paused": True, "reason": reason})
-    if oid := partner.get("owner_id"):
-        try:
-            await _send(client, oid,
-                f"⏸ <b>Channel dijeda oleh admin.</b>\n\n"
-                f"📡 <b>{partner.get('channel_name')}</b>\n📝 <i>{reason}</i>")
-        except Exception:
-            pass
-    await _reply(message, f"✅ <b>{partner.get('channel_name')}</b> dijeda.\n📝 <i>{reason}</i>")
-
-@Client.on_message(filters.command("run") & filters.private)
-@owner_only
-async def cmd_run(client, message):
-    parts = message.text.split(None, 2)
-    if len(parts) < 3:
-        await _reply(message, "<b>Format:</b> <code>/run &lt;ID&gt; &lt;alasan&gt;</code>")
-        return
-    try:
-        channel_id = int(parts[1])
-    except ValueError:
-        await _reply(message, "❌ ID harus angka.")
-        return
-    partner = get_partner(channel_id)
-    if not partner:
-        await _reply(message, "❌ Channel tidak ditemukan.")
-        return
-    reason = parts[2]
-    upsert_partner(channel_id, {"paused": False, "reason": ""})
-    if oid := partner.get("owner_id"):
-        try:
-            await _send(client, oid,
-                f"▶️ <b>Channel aktif kembali!</b>\n\n"
-                f"📡 <b>{partner.get('channel_name')}</b>\n💬 <i>{reason}</i>")
-        except Exception:
-            pass
-    await _reply(message, f"✅ <b>{partner.get('channel_name')}</b> aktif kembali.")
-
-
-# ══════════════════════════════════════════════════════════
-#  CARI CHANNEL
-# ══════════════════════════════════════════════════════════
-
-@Client.on_message(
-    filters.text & filters.private &
-    ~filters.command(["start","stats","pause","run","listpartner","daftarkan",
-                      "broadcast","broadcastpartner","maintenance","unmaintenance",
-                      "addbl","rmbl","listbl"])
-)
-async def handle_search_input(client, message):
-    if message.from_user.id != OWNER_ID:
-        return
-    if message.from_user.id not in _search_pending:
-        return
-    if message.text in {
-        "📊 Dashboard","📋 Partner","📣 Broadcast","🔧 Tools",
-        "📂 My Channel","ℹ️ Info Bot","🏠 Menu Utama",
-        "🔎 Cari Channel","🔄 Refresh Partner","◀️ Daftar Partner",
-        "🚫 Blacklist","🔧 Maintenance","🔄 Refresh Blacklist",
-        "🔴 Aktifkan Maintenance","🟢 Nonaktifkan Maintenance",
-        "👥 Broadcast Semua","📡 Broadcast Partner",
-        "⏸ Pause Channel","▶️ Aktifkan Channel",
-        "❌ Batal Cari",
-    }:
-        return
-
-    _search_pending.discard(message.from_user.id)
-    query   = message.text.strip()
-    results = search_partners(query)
-
-    if not results:
-        await _reply(
-            message,
-            f"🔎 Tidak ada hasil untuk <b>{query}</b>",
-            kb_partner()
-        )
-        return
-
-    lines = [f"🔎 <b>\"{query}\"</b> — {len(results)} hasil\n"]
-    rows  = []
-    for ch in results[:10]:
-        icon  = "▶️" if not ch.get("paused") else "⏸"
-        uname = f"@{ch['username']}" if ch.get("username") else "—"
-        lines.append(f"{icon} <b>{ch.get('channel_name','?')}</b>  {uname}")
-        rows.append([InlineKeyboardButton(
-            f"{icon}  {ch.get('channel_name','?')}",
-            callback_data=f"owner_ch_{ch['_id']}"
-        )])
-
-    await _reply(message, "\n".join(lines), InlineKeyboardMarkup(rows))
-    await _send(client, message.chat.id, "Pilih channel di atas:", kb_partner())
-
-
-# ══════════════════════════════════════════════════════════
-#  BROADCAST
-# ══════════════════════════════════════════════════════════
-
-async def _send_broadcast_menu(client, source):
-    total   = users.count_documents({})
-    total_p = len({p["owner_id"] for p in get_all_partners() if p.get("owner_id")})
+async def kb_search_btn(client: Client, message: Message):
+    uid = message.from_user.id
+    _search_pending.add(uid)
     text = (
-        f"📣 <b>Broadcast</b>\n"
+        f"🔎 <b>Cari Channel Partner</b>\n\n"
+        f"Ketik nama atau username channel:"
+    )
+    msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
+    if not msg:
+        msg = await message.reply(text, parse_mode=PM)
+        store_msg(uid, msg)
+    await message.reply("⬇️", reply_markup=kb_search())
+
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^❌ Batal Cari$"))
+@owner_only
+async def kb_cancel_search(client: Client, message: Message):
+    _search_pending.discard(message.from_user.id)
+    await kb_menu_utama(client, message)
+
+
+# ═══════════════════════════════════════════════════════════
+#  🔧 TOOLS
+# ═══════════════════════════════════════════════════════════
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^🔧 Tools$"))
+@owner_only
+async def kb_tools_btn(client: Client, message: Message):
+    uid    = message.from_user.id
+    maint  = get_maintenance()
+    bl     = get_blacklist()
+    status = "🔴 Maintenance aktif" if maint.get("active") else "🟢 Berjalan normal"
+    reason = maint.get("reason", "")
+    text = (
+        f"🔧 <b>Tools</b>\n"
         f"<code>{'─' * 26}</code>\n\n"
-        f"Semua user    <code>{total}</code>\n"
-        f"Owner partner <code>{total_p}</code>\n\n"
-        f"Pilih target di bawah:"
+        f"Status bot    {status}\n"
+        + (f"Alasan       <i>{reason}</i>\n" if reason else "") +
+        f"Blacklist     <code>{len(bl)}</code> kata\n\n"
+        f"Pilih:"
     )
-    await _reply(source, text, kb_broadcast())
+    msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
+    if not msg:
+        msg = await message.reply(text, parse_mode=PM)
+        store_msg(uid, msg)
+    await message.reply("⬇️", reply_markup=kb_tools())
 
-@Client.on_message(filters.command("broadcast") & filters.private)
+
+# ═══════════════════════════════════════════════════════════
+#  🚫 BLACKLIST
+# ═══════════════════════════════════════════════════════════
+
+async def _send_blacklist(client, message: Message):
+    uid  = message.from_user.id
+    bl   = get_blacklist()
+    text = (
+        f"🚫 <b>Blacklist Kata</b>\n"
+        f"<code>{'─' * 26}</code>\n\n"
+        + (
+            "\n".join(f"• <code>{w}</code>" for w in bl)
+            if bl else "_(kosong)_"
+        ) +
+        f"\n\nTotal: <code>{len(bl)}</code> kata"
+    )
+    msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
+    if not msg:
+        msg = await message.reply(text, parse_mode=PM)
+        store_msg(uid, msg)
+    await message.reply("⬇️", reply_markup=kb_blacklist())
+
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^🚫 Blacklist$"))
 @owner_only
-async def cmd_broadcast(client, message):
-    parts = message.text.split(None, 1)
-    if len(parts) < 2:
-        await _reply(message, "<b>Format:</b> <code>/broadcast &lt;pesan&gt;</code>")
-        return
-    text     = parts[1]
-    user_ids = get_all_user_ids()
-    total    = len(user_ids)
-    success  = failed = 0
-    prog     = await _reply(message, f"📣 Mengirim ke <code>{total}</code> user...\n░░░░░░░░░░ 0%")
+async def kb_blacklist_btn(client: Client, message: Message):
+    await _send_blacklist(client, message)
 
-    for i, uid in enumerate(user_ids, 1):
-        try:
-            await client.send_message(uid, text)
-            success += 1
-        except Exception:
-            failed += 1
-        if i % 20 == 0 or i == total:
-            pct = round(i / total * 100)
-            try:
-                await prog.edit_text(
-                    f"📣 Mengirim...\n{_bar(i, total, 10)} {pct}%\n\n"
-                    f"✅ {success}  ❌ {failed}",
-                    parse_mode=PM
-                )
-            except Exception:
-                pass
-        await asyncio.sleep(0.05)
-
-    await prog.edit_text(
-        f"✅ <b>Broadcast selesai</b>\n\n"
-        f"📨 Terkirim  <code>{success}</code>\n"
-        f"❌ Gagal     <code>{failed}</code>\n"
-        f"👥 Total     <code>{total}</code>",
-        parse_mode=PM
-    )
-
-@Client.on_message(filters.command("broadcastpartner") & filters.private)
+@Client.on_message(filters.text & filters.private & filters.regex(r"^🔄 Refresh BL$"))
 @owner_only
-async def cmd_broadcast_partner(client, message):
-    parts = message.text.split(None, 1)
-    if len(parts) < 2:
-        await _reply(message, "<b>Format:</b> <code>/broadcastpartner &lt;pesan&gt;</code>")
-        return
-    text      = parts[1]
-    owner_ids = list({p["owner_id"] for p in get_all_partners() if p.get("owner_id")})
-    total     = len(owner_ids)
-    success   = failed = 0
-    prog      = await _reply(message, f"📡 Mengirim ke <code>{total}</code> owner partner...")
+async def kb_refresh_bl(client: Client, message: Message):
+    await _send_blacklist(client, message)
 
-    for uid in owner_ids:
-        try:
-            await client.send_message(uid, text)
-            success += 1
-        except Exception:
-            failed += 1
-        await asyncio.sleep(0.05)
+@Client.on_message(filters.text & filters.private & filters.regex(r"^➕ Tambah Kata$"))
+@owner_only
+async def kb_bl_add_prompt(client: Client, message: Message):
+    uid = message.from_user.id
+    _bl_add_pending.add(uid)
+    text = "➕ <b>Tambah Kata Blacklist</b>\n\nKetik kata yang ingin diblokir:"
+    msg  = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
+    if not msg:
+        msg = await message.reply(text, parse_mode=PM)
+        store_msg(uid, msg)
+    await message.reply("⬇️", reply_markup=kb_bl_add())
 
-    await prog.edit_text(
-        f"✅ <b>Broadcast partner selesai</b>\n\n"
-        f"📨 Terkirim  <code>{success}</code>\n"
-        f"❌ Gagal     <code>{failed}</code>\n"
-        f"👥 Total     <code>{total}</code>",
-        parse_mode=PM
-    )
-
-
-# ══════════════════════════════════════════════════════════
-#  BLACKLIST
-# ══════════════════════════════════════════════════════════
-
-async def _send_blacklist_menu(client, source):
-    words = get_blacklist()
-    if words:
-        word_lines = "\n".join(f"  • <code>{w}</code>" for w in words)
-        text = (
-            f"🚫 <b>Blacklist</b>  <code>{len(words)} kata</code>\n"
-            f"<code>{'─' * 26}</code>\n\n"
-            f"{word_lines}\n\n"
-            f"Tambah: <code>/addbl &lt;kata&gt;</code>\n"
-            f"Hapus:  <code>/rmbl &lt;kata&gt;</code>"
-        )
-    else:
-        text = (
-            f"🚫 <b>Blacklist</b>  <code>kosong</code>\n"
-            f"<code>{'─' * 26}</code>\n\n"
-            f"Belum ada kata terlarang.\n\n"
-            f"Tambah: <code>/addbl &lt;kata&gt;</code>"
-        )
-    await _reply(source, text, kb_blacklist())
+@Client.on_message(filters.text & filters.private & filters.regex(r"^➖ Hapus Kata$"))
+@owner_only
+async def kb_bl_del_prompt(client: Client, message: Message):
+    uid = message.from_user.id
+    _bl_del_pending.add(uid)
+    text = "➖ <b>Hapus Kata Blacklist</b>\n\nKetik kata yang ingin dihapus:"
+    msg  = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
+    if not msg:
+        msg = await message.reply(text, parse_mode=PM)
+        store_msg(uid, msg)
+    await message.reply("⬇️", reply_markup=kb_bl_add())
 
 @Client.on_message(filters.command("addbl") & filters.private)
 @owner_only
-async def cmd_addbl(client, message):
-    parts = message.text.split(None, 1)
-    if len(parts) < 2:
-        await _reply(message, "<b>Format:</b> <code>/addbl &lt;kata&gt;</code>")
+async def cmd_addbl(client: Client, message: Message):
+    args = message.text.split(None, 1)
+    if len(args) < 2:
+        await message.reply("Gunakan: <code>/addbl &lt;kata&gt;</code>", parse_mode=PM)
         return
-    word = parts[1].strip().lower()
+    word = args[1].strip()
     add_blacklist(word)
-    await _reply(message, f"✅ <code>{word}</code> ditambahkan ke blacklist.")
+    await message.reply(f"✅ Kata <code>{word}</code> ditambahkan ke blacklist.", parse_mode=PM)
 
 @Client.on_message(filters.command("rmbl") & filters.private)
 @owner_only
-async def cmd_rmbl(client, message):
-    parts = message.text.split(None, 1)
-    if len(parts) < 2:
-        await _reply(message, "<b>Format:</b> <code>/rmbl &lt;kata&gt;</code>")
+async def cmd_rmbl(client: Client, message: Message):
+    args = message.text.split(None, 1)
+    if len(args) < 2:
+        await message.reply("Gunakan: <code>/rmbl &lt;kata&gt;</code>", parse_mode=PM)
         return
-    word = parts[1].strip().lower()
+    word = args[1].strip()
     remove_blacklist(word)
-    await _reply(message, f"✅ <code>{word}</code> dihapus dari blacklist.")
+    await message.reply(f"✅ Kata <code>{word}</code> dihapus dari blacklist.", parse_mode=PM)
 
 @Client.on_message(filters.command("listbl") & filters.private)
 @owner_only
-async def cmd_listbl(client, message):
-    words = get_blacklist()
-    if not words:
-        await _reply(message, "🚫 Blacklist kosong.")
-        return
-    await _reply(message, "🚫 <b>Blacklist:</b>\n\n" + "\n".join(f"• <code>{w}</code>" for w in words))
+async def cmd_listbl(client: Client, message: Message):
+    bl = get_blacklist()
+    text = (
+        "🚫 <b>Daftar Blacklist</b>\n\n" +
+        ("\n".join(f"• <code>{w}</code>" for w in bl) if bl else "_(kosong)_")
+    )
+    await message.reply(text, parse_mode=PM)
 
 
-# ══════════════════════════════════════════════════════════
-#  MAINTENANCE
-# ══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+#  🔧 MAINTENANCE
+# ═══════════════════════════════════════════════════════════
 
-def _maintenance_text():
-    maint  = get_maintenance()
-    active = maint.get("active", False)
-    reason = maint.get("reason") or "—"
-    status = "🔴 AKTIF" if active else "🟢 Normal"
-    return (
+async def _send_maintenance_menu(client, message: Message):
+    uid   = message.from_user.id
+    maint = get_maintenance()
+    status = "🔴 <b>AKTIF</b>" if maint.get("active") else "🟢 <b>Normal</b>"
+    reason = maint.get("reason", "—")
+    updated = maint.get("updated_at")
+    upd_s   = updated.strftime("%d %b %Y %H:%M") if updated else "—"
+    text = (
         f"🔧 <b>Maintenance Mode</b>\n"
         f"<code>{'─' * 26}</code>\n\n"
-        f"Status   {status}\n"
-        f"Alasan   <i>{reason}</i>\n\n"
-        f"Saat aktif, semua user kecuali owner tidak bisa akses bot."
-    ), active
+        f"Status       {status}\n"
+        f"Alasan       <i>{reason}</i>\n"
+        f"Diperbarui   {upd_s}\n\n"
+        f"Gunakan tombol di bawah untuk mengubah status."
+    )
+    msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
+    if not msg:
+        msg = await message.reply(text, parse_mode=PM)
+        store_msg(uid, msg)
+    await message.reply("⬇️", reply_markup=kb_maintenance())
 
-async def _send_maintenance_menu(client, source):
-    text, _ = _maintenance_text()
-    await _reply(source, text, kb_maintenance())
+@Client.on_message(filters.text & filters.private & filters.regex(r"^🔧 Maintenance$"))
+@owner_only
+async def kb_maintenance_btn(client: Client, message: Message):
+    await _send_maintenance_menu(client, message)
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^🔴 Aktifkan Maintenance$"))
+@owner_only
+async def kb_maint_on(client: Client, message: Message):
+    set_maintenance(True, "Bot sedang dalam perbaikan. Harap tunggu.")
+    await _send_maintenance_menu(client, message)
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^🟢 Nonaktifkan Maintenance$"))
+@owner_only
+async def kb_maint_off(client: Client, message: Message):
+    set_maintenance(False, "")
+    await _send_maintenance_menu(client, message)
 
 @Client.on_message(filters.command("maintenance") & filters.private)
 @owner_only
-async def cmd_maintenance(client, message):
-    parts  = message.text.split(None, 1)
-    reason = parts[1] if len(parts) > 1 else "Bot sedang dalam perbaikan. Harap tunggu."
+async def cmd_maintenance(client: Client, message: Message):
+    args = message.text.split(None, 1)
+    reason = args[1] if len(args) > 1 else "Bot sedang dalam perbaikan."
     set_maintenance(True, reason)
-    text, _ = _maintenance_text()
-    await _reply(message, text, kb_maintenance())
+    await message.reply(
+        f"🔴 <b>Maintenance diaktifkan.</b>\n\nAlasan: <i>{reason}</i>",
+        parse_mode=PM,
+    )
 
 @Client.on_message(filters.command("unmaintenance") & filters.private)
 @owner_only
-async def cmd_unmaintenance(client, message):
+async def cmd_unmaintenance(client: Client, message: Message):
     set_maintenance(False, "")
-    await _reply(message, "🟢 <b>Maintenance dinonaktifkan.</b> Bot kembali normal.", kb_main())
+    await message.reply("🟢 <b>Maintenance dinonaktifkan.</b>", parse_mode=PM)
 
 
-# ══════════════════════════════════════════════════════════
-#  MISC CALLBACKS
-# ══════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+#  📝 AKTIVITAS
+# ═══════════════════════════════════════════════════════════
 
-@Client.on_callback_query(filters.regex("^close_owner_msg$"))
-async def cb_close_owner(client, cb):
-    try:
-        await cb.message.delete()
-    except Exception:
-        pass
-    await cb.answer()
+@Client.on_message(filters.text & filters.private & filters.regex(r"^📝 Aktivitas$"))
+@owner_only
+async def kb_aktivitas_btn(client: Client, message: Message):
+    await _show_aktivitas(client, message)
 
+@Client.on_message(filters.text & filters.private & filters.regex(r"^🔄 Refresh Aktivitas$"))
+@owner_only
+async def kb_refresh_aktivitas(client: Client, message: Message):
+    await _show_aktivitas(client, message)
+
+async def _show_aktivitas(client: Client, message: Message):
+    uid      = message.from_user.id
+    activity = get_recent_activity(limit=15)
+
+    EVENT_ICONS = {
+        "repost_success":   "✅ Repost berhasil",
+        "repost_fail":      "❌ Repost gagal",
+        "repost_deleted":   "🗑 Repost dihapus",
+        "partner_added":    "➕ Partner terdaftar",
+        "partner_activated":"▶️ Partner diaktifkan",
+        "partner_manual_add":"📋 Daftar manual",
+        "bot_removed":      "⚠️ Bot dicopot",
+        "blacklist_blocked":"🚫 Blacklist blocked",
+    }
+
+    if not activity:
+        text = "📝 <b>Log Aktivitas</b>\n\nBelum ada aktivitas."
+    else:
+        lines = [f"📝 <b>Log Aktivitas (15 terakhir)</b>\n<code>{'─' * 28}</code>\n"]
+        for ev in activity:
+            event  = ev.get("event", "?")
+            label  = EVENT_ICONS.get(event, f"• {event}")
+            ts     = ev.get("ts")
+            ts_s   = ts.strftime("%d/%m %H:%M") if ts else "—"
+            pid    = ev.get("partner_id")
+
+            # Ambil nama channel jika ada
+            ch_name = ""
+            if pid:
+                p = get_partner(pid)
+                if p:
+                    ch_name = f" · <b>{p.get('channel_name','?')}</b>"
+
+            lines.append(f"<code>{ts_s}</code>  {label}{ch_name}")
+        text = "\n".join(lines)
+
+    msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
+    if not msg:
+        msg = await message.reply(text, parse_mode=PM)
+        store_msg(uid, msg)
+    await message.reply("⬇️", reply_markup=kb_aktivitas())
+
+
+# ═══════════════════════════════════════════════════════════
+#  ⚙️ PENGATURAN BOT
+# ═══════════════════════════════════════════════════════════
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^⚙️ Pengaturan$"))
+@owner_only
+async def kb_settings_btn(client: Client, message: Message):
+    await _show_settings(client, message)
+
+@Client.on_message(filters.text & filters.private & filters.regex(r"^🔄 Refresh Settings$"))
+@owner_only
+async def kb_refresh_settings(client: Client, message: Message):
+    await _show_settings(client, message)
+
+async def _show_settings(client: Client, message: Message):
+    uid = message.from_user.id
+
+    notif_owner   = get_bot_setting("owner_notif_all", True)
+    auto_delete   = get_bot_setting("auto_delete_repost", True)
+    text_repost   = get_bot_setting("allow_text_repost", True)
+
+    text = (
+        f"⚙️ <b>Pengaturan Bot</b>\n"
+        f"<code>{'─' * 26}</code>\n\n"
+        f"Semua perubahan langsung efektif.\n\n"
+        f"🔔 Notif ke owner (semua)     "
+        f"{'✅' if notif_owner else '❌'}\n"
+        f"🗑 Auto-hapus repost          "
+        f"{'✅' if auto_delete else '❌'}\n"
+        f"📝 Repost pesan teks          "
+        f"{'✅' if text_repost else '❌'}\n"
+    )
+
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            f"{'🔔' if notif_owner else '🔕'} Notif Owner",
+            callback_data="toggle_setting_owner_notif_all",
+        )],
+        [InlineKeyboardButton(
+            f"{'🗑' if auto_delete else '💾'} Auto-Hapus Repost",
+            callback_data="toggle_setting_auto_delete_repost",
+        )],
+        [InlineKeyboardButton(
+            f"{'📝' if text_repost else '🚫'} Repost Teks",
+            callback_data="toggle_setting_allow_text_repost",
+        )],
+    ])
+
+    msg = await nav_to(client, uid, message.chat.id, text,
+                       inline_markup=markup, parse_mode=PM)
+    if not msg:
+        msg = await message.reply(text, reply_markup=markup, parse_mode=PM)
+        store_msg(uid, msg)
+    await message.reply("⬇️", reply_markup=kb_settings())
+
+
+@Client.on_callback_query(
+    filters.regex(r"^toggle_setting_(owner_notif_all|auto_delete_repost|allow_text_repost)$")
+)
+@owner_only
+async def cb_toggle_setting(client: Client, cb: CallbackQuery):
+    key     = cb.matches[0].group(1)
+    current = get_bot_setting(key, True)
+    set_bot_setting(key, not current)
+
+    notif_owner = get_bot_setting("owner_notif_all", True)
+    auto_delete = get_bot_setting("auto_delete_repost", True)
+    text_repost = get_bot_setting("allow_text_repost", True)
+
+    text = (
+        f"⚙️ <b>Pengaturan Bot</b>\n"
+        f"<code>{'─' * 26}</code>\n\n"
+        f"Semua perubahan langsung efektif.\n\n"
+        f"🔔 Notif ke owner (semua)     "
+        f"{'✅' if notif_owner else '❌'}\n"
+        f"🗑 Auto-hapus repost          "
+        f"{'✅' if auto_delete else '❌'}\n"
+        f"📝 Repost pesan teks          "
+        f"{'✅' if text_repost else '❌'}\n"
+    )
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            f"{'🔔' if notif_owner else '🔕'} Notif Owner",
+            callback_data="toggle_setting_owner_notif_all",
+        )],
+        [InlineKeyboardButton(
+            f"{'🗑' if auto_delete else '💾'} Auto-Hapus Repost",
+            callback_data="toggle_setting_auto_delete_repost",
+        )],
+        [InlineKeyboardButton(
+            f"{'📝' if text_repost else '🚫'} Repost Teks",
+            callback_data="toggle_setting_allow_text_repost",
+        )],
+    ])
+    await safe_edit(cb.message, text, markup=markup, parse_mode=PM)
+    await cb.answer("Setting diperbarui ✅", show_alert=False)
+
+
+# ═══════════════════════════════════════════════════════════
+#  INPUT HANDLER — menangkap teks bebas untuk pencarian
+#  dan input blacklist (group=4, setelah broadcast group=5)
+# ═══════════════════════════════════════════════════════════
+
+OWNER_BTN_TEXTS = {
+    "🏠 Menu Utama", "📊 Dashboard", "📋 Partner", "📣 Broadcast", "🔧 Tools",
+    "📝 Aktivitas", "⚙️ Pengaturan", "🔎 Cari Channel", "🔄 Refresh Partner",
+    "🏆 Top Channel", "◀️ Daftar Partner", "🚫 Blacklist", "🔧 Maintenance",
+    "🔄 Refresh BL", "➕ Tambah Kata", "➖ Hapus Kata", "❌ Batal",
+    "🔴 Aktifkan Maintenance", "🟢 Nonaktifkan Maintenance",
+    "❌ Batal Cari", "🔄 Refresh Aktivitas", "🔄 Refresh Settings",
+    "⏸ Pause Channel", "▶️ Aktifkan Channel",
+}
+
+
+@Client.on_message(filters.text & filters.private, group=4)
+@owner_only
+async def owner_text_input(client: Client, message: Message):
+    uid  = message.from_user.id
+    text = message.text
+
+    if text in OWNER_BTN_TEXTS:
+        return  # Ditangani handler lain
+
+    # ── Input pencarian channel ────────────────────────────
+    if uid in _search_pending:
+        _search_pending.discard(uid)
+        results = search_partners(text)
+        if not results:
+            content = (
+                f"🔎 <b>Hasil Pencarian: «{text}»</b>\n\n"
+                f"Tidak ada channel yang cocok."
+            )
+            msg = await nav_to(client, uid, message.chat.id, content, parse_mode=PM)
+            if not msg:
+                msg = await message.reply(content, parse_mode=PM)
+                store_msg(uid, msg)
+            await message.reply("⬇️", reply_markup=kb_partner())
+            return
+
+        rows = [[InlineKeyboardButton(
+            f"{'▶️' if not ch.get('paused') else '⏸'}  {ch.get('channel_name','?')}",
+            callback_data=f"owner_ch_{ch['_id']}",
+        )] for ch in results]
+
+        content = (
+            f"🔎 <b>Hasil Pencarian: «{text}»</b>\n\n"
+            f"Ditemukan <code>{len(results)}</code> channel:"
+        )
+        markup = InlineKeyboardMarkup(rows)
+        msg = await nav_to(client, uid, message.chat.id, content,
+                           inline_markup=markup, parse_mode=PM)
+        if not msg:
+            msg = await message.reply(content, reply_markup=markup, parse_mode=PM)
+            store_msg(uid, msg)
+        await message.reply("⬇️", reply_markup=kb_partner())
+        return
+
+    # ── Input tambah blacklist ─────────────────────────────
+    if uid in _bl_add_pending:
+        _bl_add_pending.discard(uid)
+        word = text.strip().lower()
+        add_blacklist(word)
+        content = (
+            f"✅ <b>Kata ditambahkan ke blacklist.</b>\n\n"
+            f"Kata: <code>{word}</code>"
+        )
+        msg = await nav_to(client, uid, message.chat.id, content, parse_mode=PM)
+        if not msg:
+            msg = await message.reply(content, parse_mode=PM)
+            store_msg(uid, msg)
+        await message.reply("⬇️", reply_markup=kb_blacklist())
+        return
+
+    # ── Input hapus blacklist ──────────────────────────────
+    if uid in _bl_del_pending:
+        _bl_del_pending.discard(uid)
+        word = text.strip().lower()
+        remove_blacklist(word)
+        content = (
+            f"✅ <b>Kata dihapus dari blacklist.</b>\n\n"
+            f"Kata: <code>{word}</code>"
+        )
+        msg = await nav_to(client, uid, message.chat.id, content, parse_mode=PM)
+        if not msg:
+            msg = await message.reply(content, parse_mode=PM)
+            store_msg(uid, msg)
+        await message.reply("⬇️", reply_markup=kb_blacklist())
+        return
+
+
+# ── Tombol ❌ Batal (untuk BL input) ──────────────────────
+@Client.on_message(filters.text & filters.private & filters.regex(r"^❌ Batal$"))
+@owner_only
+async def kb_batal(client: Client, message: Message):
+    uid = message.from_user.id
+    _bl_add_pending.discard(uid)
+    _bl_del_pending.discard(uid)
+    await _send_blacklist(client, message)
+
+
+# ── noop callback ──────────────────────────────────────────
 @Client.on_callback_query(filters.regex("^noop$"))
-async def cb_noop(client, cb):
+async def cb_noop_owner(client: Client, cb: CallbackQuery):
     await cb.answer()
