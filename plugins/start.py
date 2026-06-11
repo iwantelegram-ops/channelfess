@@ -41,7 +41,6 @@ def user_keyboard():
         [
             [KeyboardButton("📂 My Channel"), KeyboardButton("📊 Statistik Saya")],
             [KeyboardButton("🔔 Notifikasi"),  KeyboardButton("ℹ️ Info Bot")],
-            [KeyboardButton("❓ Bantuan")],
         ],
         resize_keyboard=True,
     )
@@ -275,14 +274,6 @@ def _bantuan_markup(page: int, total: int):
                  f"&admin=post_messages+edit_messages+delete_messages+invite_users"),
         )])
     return InlineKeyboardMarkup(rows)
-
-
-@Client.on_message(filters.text & filters.private & filters.regex(r"^❓ Bantuan$"), group=1)
-async def bantuan(client: Client, message: Message):
-    pages  = _bantuan_pages(BOT_USERNAME)
-    text   = pages[0]
-    markup = _bantuan_markup(0, len(pages))
-    await client.send_message(message.chat.id, text, reply_markup=markup, parse_mode=PM)
 
 
 @Client.on_callback_query(filters.regex(r"^bantuan_page_(\d+)$"))
