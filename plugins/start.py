@@ -173,7 +173,7 @@ async def cb_recheck_join(client: Client, cb):
 #  ℹ️ Info Bot
 # ═══════════════════════════════════════════════════════════
 
-@Client.on_message(filters.text & filters.private & filters.regex(r"^ℹ️ Info Bot$"))
+@Client.on_message(filters.text & filters.private & filters.regex(r"^ℹ️ Info Bot$"), group=1)
 async def info_bot(client: Client, message: Message):
     total_p  = count_partners()
     active_p = len(get_active_partners())
@@ -311,7 +311,7 @@ def _bantuan_markup(page: int, total: int):
     return InlineKeyboardMarkup(rows)
 
 
-@Client.on_message(filters.text & filters.private & filters.regex(r"^❓ Bantuan$"))
+@Client.on_message(filters.text & filters.private & filters.regex(r"^❓ Bantuan$"), group=1)
 async def bantuan(client: Client, message: Message):
     pages  = _bantuan_pages(BOT_USERNAME)
     text   = pages[0]
