@@ -139,60 +139,43 @@ class MongoStorage(Storage):
             raise KeyError(f"Phone {phone_number} not in peer cache")
         return doc["_id"], doc.get("access_hash"), doc.get("type")
 
-    # ── Properties (Pyrogram 2.x property-based storage API) ──
+    # ── Async getter/setter methods (Pyrogram 2.0.106) ──
+    #
+    # Pyrogram menggunakan sentinel `object` sebagai default:
+    #   await storage.dc_id()        → getter (value is object)
+    #   await storage.dc_id(5)       → setter (value is not object)
 
-    @property
-    def dc_id(self):
-        return self._dc_id
-
-    @dc_id.setter
-    def dc_id(self, value):
+    async def dc_id(self, value=object):
+        if value is object:
+            return self._dc_id
         self._dc_id = value
 
-    @property
-    def api_id(self):
-        return self._api_id
-
-    @api_id.setter
-    def api_id(self, value):
+    async def api_id(self, value=object):
+        if value is object:
+            return self._api_id
         self._api_id = value
 
-    @property
-    def test_mode(self):
-        return self._test_mode
-
-    @test_mode.setter
-    def test_mode(self, value):
+    async def test_mode(self, value=object):
+        if value is object:
+            return self._test_mode
         self._test_mode = value
 
-    @property
-    def auth_key(self):
-        return self._auth_key
-
-    @auth_key.setter
-    def auth_key(self, value):
+    async def auth_key(self, value=object):
+        if value is object:
+            return self._auth_key
         self._auth_key = value
 
-    @property
-    def date(self):
-        return self._date
-
-    @date.setter
-    def date(self, value):
+    async def date(self, value=object):
+        if value is object:
+            return self._date
         self._date = value
 
-    @property
-    def user_id(self):
-        return self._user_id
-
-    @user_id.setter
-    def user_id(self, value):
+    async def user_id(self, value=object):
+        if value is object:
+            return self._user_id
         self._user_id = value
 
-    @property
-    def is_bot(self):
-        return self._is_bot
-
-    @is_bot.setter
-    def is_bot(self, value):
+    async def is_bot(self, value=object):
+        if value is object:
+            return self._is_bot
         self._is_bot = value
