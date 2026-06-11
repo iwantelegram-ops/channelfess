@@ -159,25 +159,24 @@ async def info_bot(client: Client, message: Message):
         f"   📡 Partner      <code>{active_p}</code> aktif · <code>{total_p}</code> total\n"
         f"   📦 Total repost <code>{total_r}</code>"
     )
-    
-    # Menggunakan callback terstruktur unik 'buka_tutorial_user' agar tidak tabrakan
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 Kunjungi Channel Utama",
                              url=f"https://t.me/{MAIN_CHANNEL_USERNAME}")],
-        [InlineKeyboardButton("📖 Tutorial Penggunaan", callback_data="buka_tutorial_user")],
+        [InlineKeyboardButton("📖 Tutorial Penggunaan", callback_data="tutorial")],
     ])
     await message.reply(text, reply_markup=markup, parse_mode=PM)
 
 
 # ═══════════════════════════════════════════════════════════
-#  📖 Tutorial (Menerapkan Metode Blok Tombol Normal & Stabil)
+#  📖 Tutorial (Menggunakan Struktur Penutup Tombol Yang Benar)
 # ═══════════════════════════════════════════════════════════
 
-@Client.on_callback_query(filters.regex(r"^buka_tutorial_user$"))
+@Client.on_callback_query(filters.regex(r"^tutorial$"))
 async def cb_tutorial(client: Client, cb: CallbackQuery):
     answered = False
     try:
-        # METODE TERBAIK: Kirim ack jawaban secepatnya agar tombol tidak hang/loading terus
+        # Meniru metode tombol normal lainnya: jawab callback SEGERA di awal 
+        # agar Telegram tahu tombol berhasil diklik dan menghentikan status loading.
         await answer_cb(cb, "Memuat tutorial...")
         answered = True
 
@@ -220,19 +219,20 @@ async def cb_tutorial(client: Client, cb: CallbackQuery):
             )
         ]])
 
-        # Eksekusi pengiriman konten memakai safe_edit
+        # Coba edit pesan lama
         res = await safe_edit(cb.message, text, markup=markup, parse_mode=PM)
         if res is None:
             await client.send_message(cb.message.chat.id, text, reply_markup=markup, parse_mode=PM)
 
     except Exception as e:
-        log.error(f"[cb_tutorial] Terjadi masalah: {e}")
-        # Jalur alternatif darurat (Kirim pesan baru jika edit bermasalah)
+        log.error(f"[cb_tutorial] Terjadi kendala saat merender tutorial: {e}")
+        # Jalur alternatif darurat (Kirim pesan baru jika proses edit gagal)
         try:
             await client.send_message(cb.message.chat.id, text, reply_markup=markup, parse_mode=PM)
         except Exception as e2:
             log.error(f"[cb_tutorial] Fallback send_message gagal: {e2}")
     finally:
-        # Jaminan penutupan state: Jika di atas gagal total, pastikan Telegram tetap menerima penutupan loading callback
+        # Jika di atas terjadi crash parah sebelum callback terjawab, 
+        # blok ini menjamin tombol tetap dilepas status loading-nya (tidak stuck).
         if not answered:
             await answer_cb(cb)
