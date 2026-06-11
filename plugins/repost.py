@@ -18,12 +18,15 @@ from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
 from pyrogram.enums import ChatMemberStatus, ChatType, ParseMode
-from pyrogram.errors import FloodWait, ChatWriteForbidden, PeerIdInvalid, MessageIdInvalid
+from pyrogram.errors import (
+    FloodWait, ChatWriteForbidden, PeerIdInvalid, MessageIdInvalid,
+    ChatAdminRequired, UserNotParticipant, ChannelPrivate,
+)
 from config import MAIN_CHANNEL_ID
 from db.helpers import (
     get_partner, upsert_partner, save_post, get_post, delete_post,
     increment_partner_posts, contains_blacklisted, count_posts_by_partner,
-    get_notif_setting, log_activity, get_bot_setting,
+    get_notif_setting, log_activity, get_bot_setting, get_all_partners,
 )
 from utils import safe_send, safe_delete, answer_cb
 
@@ -73,20 +76,34 @@ def build_caption(original_caption, channel_title, invite_link,
 
 async def _get_or_create_invite_link(client: Client, channel_id: int) -> str:
     """
-    Ambil invite_link dari DB jika sudah ada.
-    Kalau belum, minta Telegram generate invite link permanen lalu simpan ke DB.
-    Fallback ke string kosong jika bot tidak punya izin.
+    3 langkah:
+      1. Cek DB — jika sudah ada, pakai langsung.
+      2. Jika belum, generate via Telegram lalu simpan ke DB.
+      3. Jika tidak ada izin (ChatAdminRequired dll), abaikan diam-diam → return "".
     """
+    # Langkah 1 — ambil dari DB
     partner = get_partner(channel_id)
     if partner and partner.get("invite_link"):
         return partner["invite_link"]
 
+    # Langkah 2 — generate dari Telegram
+    _NO_PERM_ERRORS = (
+        ChatAdminRequired,
+        ChatWriteForbidden,
+        ChannelPrivate,
+        UserNotParticipant,
+    )
     try:
         link = await client.export_chat_invite_link(channel_id)
         if link:
             upsert_partner(channel_id, {"invite_link": link})
             log.info(f"[invite_link] Generated untuk {channel_id}: {link}")
             return link
+    except _NO_PERM_ERRORS:
+        # Langkah 3 — tidak ada izin, abaikan tanpa error
+        log.debug(f"[invite_link] Tidak ada izin generate untuk {channel_id}, diabaikan")
+    except FloodWait as e:
+        log.warning(f"[invite_link] FloodWait {e.value}s untuk {channel_id}, skip")
     except Exception as e:
         log.warning(f"[invite_link] Gagal generate untuk {channel_id}: {e}")
     return ""
@@ -317,7 +334,7 @@ async def cmd_daftarkan(client: Client, message: Message):
 #  REPOST — foto, video, dokumen, audio, teks
 # ═══════════════════════════════════════════════════════════
 
-MEDIA_FILTER = (filters.photo | filters.video)
+MEDIA_FILTER = (filters.photo | filters.video | filters.text)
 
 
 @Client.on_message(filters.channel & MEDIA_FILTER)
@@ -372,8 +389,18 @@ async def repost(client: Client, message: Message):
         bot_username     = bot_uname_real,
     )
 
-    # Hanya proses foto atau video (dengan atau tanpa caption)
-    if not (message.photo or message.video):
+    # ── Cek tipe pesan ────────────────────────────────────
+    is_media     = bool(message.photo or message.video)
+    is_text_only = bool(message.text and not is_media)
+
+    # Jika pesan teks murni, cek setting allow_text_repost
+    if is_text_only:
+        allow_text = get_bot_setting("allow_text_repost", True)
+        if not allow_text:
+            return
+
+    # Jika bukan media dan bukan teks murni, abaikan
+    if not is_media and not is_text_only:
         return
 
     uname = partner.get("username", "")
@@ -412,6 +439,16 @@ async def repost(client: Client, message: Message):
                 parse_mode   = PM,
                 reply_markup = btn,
                 supports_streaming = True,
+            )
+        )
+    elif is_text_only:
+        sent = await safe_send(
+            client.send_message(
+                chat_id                  = MAIN_CHANNEL_ID,
+                text                     = cap,
+                parse_mode               = PM,
+                reply_markup             = btn,
+                disable_web_page_preview = True,
             )
         )
     else:
@@ -504,3 +541,90 @@ async def _process_deleted(client, channel_id: int, msg_ids: list):
         delete_post(channel_id, msg_id)
 
 
+
+# ═══════════════════════════════════════════════════════════
+#  SCHEDULER — UPDATE OWNER NAME HARIAN (jam 00:00 UTC)
+# ═══════════════════════════════════════════════════════════
+
+async def _update_owner_names(client: Client):
+    """
+    Iterasi semua partner channel, ambil nama terbaru owner dari Telegram,
+    bandingkan dengan DB — jika berubah, simpan.
+
+    Berjalan lambat tapi aman:
+    - 3 detik antar request normal
+    - Jika kena FloodWait, tunggu sesuai nilai + 5 detik
+    - Error lain (user privasi, deactivated dll) → skip diam-diam
+    """
+    partners = get_all_partners()
+    if not partners:
+        return
+
+    log.info(f"[owner_name_sync] Mulai sync {len(partners)} partner(s)...")
+    updated = 0
+
+    for p in partners:
+        owner_id = p.get("owner_id")
+        if not owner_id:
+            await asyncio.sleep(3)
+            continue
+
+        try:
+            user = await client.get_users(owner_id)
+            new_name = (user.first_name or "").strip()
+            if user.last_name:
+                new_name = f"{new_name} {user.last_name}".strip()
+            if not new_name:
+                new_name = user.username or "Unknown"
+
+            old_name = p.get("owner_name", "")
+            if new_name != old_name:
+                upsert_partner(p["_id"], {"owner_name": new_name})
+                log.info(
+                    f"[owner_name_sync] channel={p['_id']} "
+                    f"'{old_name}' → '{new_name}'"
+                )
+                updated += 1
+
+        except FloodWait as e:
+            wait = e.value + 5
+            log.warning(f"[owner_name_sync] FloodWait {wait}s, menunggu...")
+            await asyncio.sleep(wait)
+            # Jangan skip — coba lagi di iterasi berikutnya (next run)
+        except Exception as e:
+            log.debug(f"[owner_name_sync] Skip owner_id={owner_id}: {e}")
+
+        # Jeda aman antar request
+        await asyncio.sleep(3)
+
+    log.info(f"[owner_name_sync] Selesai — {updated} nama diperbarui.")
+
+
+async def _schedule_midnight_owner_sync(client: Client):
+    """
+    Loop selamanya: tunggu sampai jam 00:00 UTC berikutnya, lalu jalankan sync.
+    Menggunakan waktu nyata (bukan interval tetap) agar tidak drift.
+    """
+    while True:
+        now  = datetime.now(timezone.utc)
+        # Tengah malam UTC berikutnya
+        next_midnight = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        wait_seconds = (next_midnight - now).total_seconds()
+        log.info(
+            f"[owner_name_sync] Sync berikutnya dalam "
+            f"{int(wait_seconds // 3600)}j "
+            f"{int((wait_seconds % 3600) // 60)}m"
+        )
+        await asyncio.sleep(wait_seconds)
+        try:
+            await _update_owner_names(client)
+        except Exception as e:
+            log.error(f"[owner_name_sync] Error tak terduga: {e}")
+
+
+async def start_owner_name_scheduler(client: Client):
+    """Dipanggil sekali saat bot start dari main.py."""
+    asyncio.create_task(_schedule_midnight_owner_sync(client))
+    log.info("[owner_name_sync] Scheduler diaktifkan.")
