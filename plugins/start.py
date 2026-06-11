@@ -321,6 +321,7 @@ async def bantuan(client: Client, message: Message):
 
 @Client.on_callback_query(filters.regex(r"^bantuan_page_(\d+)$"))
 async def cb_bantuan_page(client: Client, cb):
+    log.info(f"[cb_bantuan_page] dipanggil oleh user={cb.from_user.id} page={cb.data}")
     page   = int(cb.matches[0].group(1))
     pages  = _bantuan_pages(BOT_USERNAME)
     total  = len(pages)
@@ -328,8 +329,14 @@ async def cb_bantuan_page(client: Client, cb):
     markup = _bantuan_markup(page, total)
     try:
         await cb.message.edit_text(pages[page], reply_markup=markup, parse_mode=PM)
-    except Exception:
-        await client.send_message(cb.message.chat.id, pages[page], reply_markup=markup, parse_mode=PM)
+        log.info("[cb_bantuan_page] edit_text berhasil")
+    except Exception as e:
+        log.warning(f"[cb_bantuan_page] edit_text gagal: {e} — coba send_message")
+        try:
+            await client.send_message(cb.message.chat.id, pages[page], reply_markup=markup, parse_mode=PM)
+            log.info("[cb_bantuan_page] send_message berhasil")
+        except Exception as e2:
+            log.error(f"[cb_bantuan_page] send_message juga gagal: {e2}")
     await answer_cb(cb)
 
 
