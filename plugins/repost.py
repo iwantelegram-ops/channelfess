@@ -349,15 +349,35 @@ async def repost(client: Client, message: Message):
         InlineKeyboardButton("🔗 Lihat Post Asli", url=original_url)
     ]])
 
-    sent = await safe_send(
-        message.copy(
-            MAIN_CHANNEL_ID,
-            caption=cap,
-            reply_markup=btn,
-            parse_mode=PM,
-            disable_web_page_preview=True,
+    # Kirim manual (bukan message.copy) agar bisa kontrol tanpa web preview.
+    # Message.copy() di Pyrogram 2.x tidak support disable_web_page_preview.
+    if message.photo:
+        sent = await safe_send(
+            client.send_photo(
+                chat_id      = MAIN_CHANNEL_ID,
+                photo        = message.photo.file_id,
+                caption      = cap,
+                parse_mode   = PM,
+                reply_markup = btn,
+            )
         )
-    )
+    elif message.video:
+        sent = await safe_send(
+            client.send_video(
+                chat_id      = MAIN_CHANNEL_ID,
+                video        = message.video.file_id,
+                caption      = cap,
+                duration     = message.video.duration,
+                width        = message.video.width,
+                height       = message.video.height,
+                thumb        = message.video.thumbs[0].file_id if message.video.thumbs else None,
+                parse_mode   = PM,
+                reply_markup = btn,
+                supports_streaming = True,
+            )
+        )
+    else:
+        sent = None
 
     if sent:
         save_post(channel_id, message.id, sent.id)
