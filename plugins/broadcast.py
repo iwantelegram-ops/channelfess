@@ -85,11 +85,7 @@ async def kb_broadcast_menu_btn(client: Client, message: Message):
         f"📡 Owner partner unik  <code>{total_p}</code>\n\n"
         f"Pilih target broadcast:"
     )
-    msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
-    if not msg:
-        msg = await message.reply(text, parse_mode=PM)
-        store_msg(uid, msg)
-    await message.reply(".", reply_markup=kb_broadcast_menu())
+    await message.reply(text, reply_markup=kb_broadcast_menu(), parse_mode=PM)
 
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^👥 Broadcast Semua User$"))
@@ -104,11 +100,7 @@ async def kb_bc_all_users(client: Client, message: Message):
         f"Target: <code>{total}</code> user\n\n"
         f"✏️ Ketik pesan broadcast kamu:"
     )
-    msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
-    if not msg:
-        msg = await message.reply(text, parse_mode=PM)
-        store_msg(uid, msg)
-    await message.reply(".", reply_markup=kb_waiting_input())
+    await message.reply(text, reply_markup=kb_waiting_input(), parse_mode=PM)
 
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^📡 Broadcast Partner$"))
@@ -124,11 +116,7 @@ async def kb_bc_partner(client: Client, message: Message):
         f"Target: <code>{len(owners)}</code> owner partner\n\n"
         f"✏️ Ketik pesan broadcast kamu:"
     )
-    msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
-    if not msg:
-        msg = await message.reply(text, parse_mode=PM)
-        store_msg(uid, msg)
-    await message.reply(".", reply_markup=kb_waiting_input())
+    await message.reply(text, reply_markup=kb_waiting_input(), parse_mode=PM)
 
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^❌ Batal Broadcast$"))
@@ -137,11 +125,7 @@ async def kb_cancel_broadcast(client: Client, message: Message):
     uid = message.from_user.id
     _bc_state.pop(uid, None)
     text = "❌ <b>Broadcast dibatalkan.</b>"
-    msg  = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
-    if not msg:
-        msg = await message.reply(text, parse_mode=PM)
-        store_msg(uid, msg)
-    await message.reply(".", reply_markup=kb_main())
+    await message.reply(text, reply_markup=kb_main(), parse_mode=PM)
 
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^📜 Riwayat Broadcast$"))
@@ -169,10 +153,7 @@ async def kb_bc_history(client: Client, message: Message):
             )
         text = "\n".join(lines)
 
-    msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
-    if not msg:
-        msg = await message.reply(text, parse_mode=PM)
-        store_msg(uid, msg)
+    await message.reply(text, reply_markup=kb_broadcast_menu(), parse_mode=PM)
 
 
 # ═══════════════════════════════════════════════════════════

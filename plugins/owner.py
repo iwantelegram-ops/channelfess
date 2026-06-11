@@ -137,15 +137,27 @@ _bl_del_pending:  set[int]       = set()
 
 async def _show(client, message: Message, text: str,
                 inline_markup=None, reply_kb=None):
-    """Edit stored message, lalu kirim keyboard jika berubah."""
+    """Kirim pesan baru dengan konten + keyboard sekaligus."""
     uid = message.from_user.id
-    msg = await nav_to(client, uid, message.chat.id, text,
-                       inline_markup=inline_markup, parse_mode=PM)
-    if not msg:
-        msg = await message.reply(text, reply_markup=inline_markup, parse_mode=PM)
-        store_msg(uid, msg)
-    if reply_kb:
-        await client.send_message(message.chat.id, ".", reply_markup=reply_kb)
+    # Tentukan markup: reply_kb lebih prioritas untuk navigasi utama,
+    # inline_markup dipakai bila tidak ada reply_kb
+    markup = reply_kb if reply_kb else inline_markup
+    # Bila keduanya ada, kirim dua pesan: satu inline + satu reply kb
+    if reply_kb and inline_markup:
+        msg = await nav_to(client, uid, message.chat.id, text,
+                           inline_markup=inline_markup, parse_mode=PM)
+        if not msg:
+            msg = await message.reply(text, reply_markup=inline_markup, parse_mode=PM)
+            store_msg(uid, msg)
+        await client.send_message(message.chat.id, "⬇️", reply_markup=reply_kb)
+    else:
+        msg = await nav_to(client, uid, message.chat.id, text,
+                           inline_markup=inline_markup,
+                           reply_markup=reply_kb,
+                           parse_mode=PM)
+        if not msg:
+            msg = await message.reply(text, reply_markup=markup, parse_mode=PM)
+            store_msg(uid, msg)
 
 
 # ═══════════════════════════════════════════════════════════

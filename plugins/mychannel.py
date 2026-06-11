@@ -101,11 +101,8 @@ async def _show_channel_list(client, cb_or_msg, user_id: int,
                                                  reply_markup=markup, parse_mode=PM)
                 store_msg(user_id, sent)
         else:
-            msg = await nav_to(client, user_id, cb_or_msg.chat.id, text,
-                               inline_markup=markup, parse_mode=PM)
-            if not msg:
-                sent = await cb_or_msg.reply(text, reply_markup=markup, parse_mode=PM)
-                store_msg(user_id, sent)
+            sent = await cb_or_msg.reply(text, reply_markup=markup, parse_mode=PM)
+            store_msg(user_id, sent)
     except Exception as e:
         log.error(f"[_show_channel_list] {e}")
         if from_cb:
@@ -491,9 +488,7 @@ async def statistik_saya(client: Client, message: Message):
             f"📊 <b>Statistik Saya</b>\n\n"
             f"Kamu belum punya channel terdaftar."
         )
-        msg = await nav_to(client, user_id, message.chat.id, text, parse_mode=PM)
-        if not msg:
-            await message.reply(text, parse_mode=PM)
+        await message.reply(text, parse_mode=PM)
         return
 
     now   = datetime.now(timezone.utc)
@@ -532,10 +527,7 @@ async def statistik_saya(client: Client, message: Message):
     markup = InlineKeyboardMarkup([[
         InlineKeyboardButton("📂 My Channel", callback_data="my_channels_0")
     ]])
-    msg = await nav_to(client, user_id, message.chat.id,
-                       "\n".join(lines), inline_markup=markup, parse_mode=PM)
-    if not msg:
-        await message.reply("\n".join(lines), reply_markup=markup, parse_mode=PM)
+    await message.reply("\n".join(lines), reply_markup=markup, parse_mode=PM)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -575,10 +567,7 @@ def _notif_text_and_markup(user_id: int):
 async def notifikasi_settings(client: Client, message: Message):
     user_id = message.from_user.id
     text, markup = _notif_text_and_markup(user_id)
-    msg = await nav_to(client, user_id, message.chat.id, text,
-                       inline_markup=markup, parse_mode=PM)
-    if not msg:
-        await message.reply(text, reply_markup=markup, parse_mode=PM)
+    await message.reply(text, reply_markup=markup, parse_mode=PM)
 
 
 @Client.on_callback_query(filters.regex(r"^notif_toggle_(repost|blacklist|status)$"))

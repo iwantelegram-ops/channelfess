@@ -149,8 +149,8 @@ async def cb_recheck_join(client: Client, cb):
             "joined":    True,
             "joined_at": datetime.now(timezone.utc),
         })
-        await safe_edit(
-            cb.message,
+        await answer_cb(cb, "✅ Berhasil! Selamat datang.")
+        welcome_text = (
             f"⚡ <b>Halo, {user_name}!</b>\n\n"
             f"<b>FessBot</b> otomatis meneruskan foto &amp; video dari channelmu "
             f"ke channel utama.\n\n"
@@ -158,18 +158,12 @@ async def cb_recheck_join(client: Client, cb):
             f"1️⃣  Tambahkan bot sebagai <b>Admin</b> di channelmu\n"
             f"2️⃣  Channel otomatis terdaftar\n"
             f"3️⃣  Konten di-repost real-time ✅\n\n"
-            f"Buka <b>My Channel</b> untuk mulai. 👇",
-            parse_mode=PM,
+            f"Buka <b>My Channel</b> untuk mulai. 👇"
         )
-        await answer_cb(cb, "✅ Berhasil! Selamat datang.")
-        # Kirim reply keyboard
-        from pyrogram.types import ReplyKeyboardMarkup, KeyboardButton
-        kb = ReplyKeyboardMarkup([
-            [KeyboardButton("📂 My Channel"), KeyboardButton("📊 Statistik Saya")],
-            [KeyboardButton("🔔 Notifikasi"),  KeyboardButton("ℹ️ Info Bot")],
-            [KeyboardButton("❓ Bantuan")],
-        ], resize_keyboard=True)
-        await client.send_message(cb.message.chat.id, ".", reply_markup=kb)
+        await client.send_message(
+            cb.message.chat.id, welcome_text,
+            reply_markup=user_keyboard(), parse_mode=PM,
+        )
     except Exception as e:
         log.error(f"[cb_recheck_join] {e}")
         await answer_cb(cb, "❌ Error, coba lagi.", show_alert=True)
@@ -197,11 +191,7 @@ async def info_bot(client: Client, message: Message):
         f"📢 Channel Utama → @{MAIN_CHANNEL_USERNAME}\n\n"
         f"<i>FessBot v2 — Auto Repost Bot</i>"
     )
-    msg = await nav_to(
-        client, message.from_user.id, message.chat.id, text, parse_mode=PM
-    )
-    if not msg:
-        await message.reply(text, parse_mode=PM)
+    await message.reply(text, parse_mode=PM)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -240,9 +230,4 @@ async def bantuan(client: Client, message: Message):
         )
     ]])
 
-    msg = await nav_to(
-        client, message.from_user.id, message.chat.id, text,
-        inline_markup=markup, parse_mode=PM,
-    )
-    if not msg:
-        await message.reply(text, reply_markup=markup, parse_mode=PM)
+    await message.reply(text, reply_markup=markup, parse_mode=PM)
