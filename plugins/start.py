@@ -169,7 +169,7 @@ async def cb_recheck_join(client: Client, cb):
             [KeyboardButton("🔔 Notifikasi"),  KeyboardButton("ℹ️ Info Bot")],
             [KeyboardButton("❓ Bantuan")],
         ], resize_keyboard=True)
-        await client.send_message(cb.message.chat.id, "‎", reply_markup=kb)
+        await client.send_message(cb.message.chat.id, ".", reply_markup=kb)
     except Exception as e:
         log.error(f"[cb_recheck_join] {e}")
         await answer_cb(cb, "❌ Error, coba lagi.", show_alert=True)

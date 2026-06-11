@@ -145,7 +145,7 @@ async def _show(client, message: Message, text: str,
         msg = await message.reply(text, reply_markup=inline_markup, parse_mode=PM)
         store_msg(uid, msg)
     if reply_kb:
-        await client.send_message(message.chat.id, "‎", reply_markup=reply_kb)
+        await client.send_message(message.chat.id, ".", reply_markup=reply_kb)
 
 
 # ═══════════════════════════════════════════════════════════

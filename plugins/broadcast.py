@@ -89,7 +89,7 @@ async def kb_broadcast_menu_btn(client: Client, message: Message):
     if not msg:
         msg = await message.reply(text, parse_mode=PM)
         store_msg(uid, msg)
-    await message.reply("‎", reply_markup=kb_broadcast_menu())
+    await message.reply(".", reply_markup=kb_broadcast_menu())
 
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^👥 Broadcast Semua User$"))
@@ -108,7 +108,7 @@ async def kb_bc_all_users(client: Client, message: Message):
     if not msg:
         msg = await message.reply(text, parse_mode=PM)
         store_msg(uid, msg)
-    await message.reply("‎", reply_markup=kb_waiting_input())
+    await message.reply(".", reply_markup=kb_waiting_input())
 
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^📡 Broadcast Partner$"))
@@ -128,7 +128,7 @@ async def kb_bc_partner(client: Client, message: Message):
     if not msg:
         msg = await message.reply(text, parse_mode=PM)
         store_msg(uid, msg)
-    await message.reply("‎", reply_markup=kb_waiting_input())
+    await message.reply(".", reply_markup=kb_waiting_input())
 
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^❌ Batal Broadcast$"))
@@ -141,7 +141,7 @@ async def kb_cancel_broadcast(client: Client, message: Message):
     if not msg:
         msg = await message.reply(text, parse_mode=PM)
         store_msg(uid, msg)
-    await message.reply("‎", reply_markup=kb_main())
+    await message.reply(".", reply_markup=kb_main())
 
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^📜 Riwayat Broadcast$"))
