@@ -16,6 +16,6 @@ OWNER_NAME            = os.getenv("OWNER_NAME", "Owner")
 BOT_NAME              = os.getenv("BOT_NAME", "FessBot")
 BOT_DESC              = os.getenv("BOT_DESC", "Auto Repost Bot")
 
-# Flood control
-FLOOD_SLEEP_THRESHOLD = 60   # detik — jika FloodWait > angka ini, skip
-BROADCAST_DELAY       = 0.05 # detik antar pengiriman broadcast
+FLOOD_SLEEP_THRESHOLD = 60
+BROADCAST_DELAY       = 0.05
+RATE_LIMIT_PER_MINUTE = 20

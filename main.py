@@ -11,7 +11,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("fessbot")
-# Set DEBUG untuk modul repost agar bisa diagnosa delete tracking
 logging.getLogger("fessbot.repost").setLevel(logging.DEBUG)
 
 SESSION_NAME = "fessbot_session"
@@ -24,8 +23,6 @@ app = Client(
     plugins  = dict(root="plugins"),
 )
 
-# Ganti FileStorage bawaan Pyrogram dengan MongoStorage
-# sebelum app.run() agar sesi disimpan di MongoDB, bukan file .session
 app.storage = MongoStorage(
     name               = SESSION_NAME,
     collection_session = sessions_col,
@@ -33,6 +30,6 @@ app.storage = MongoStorage(
 )
 
 if __name__ == "__main__":
-    log.info("🤖 FessBot v2 starting...")
+    log.info("🤖 FessBot v3 starting...")
     app.run()
-    log.info("🤖 FessBot v2 stopped.")
+    log.info("🤖 FessBot v3 stopped.")
