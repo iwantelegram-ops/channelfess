@@ -20,7 +20,7 @@ async def check_membership(client: Client, user_id: int) -> bool:
     try:
         member = await client.get_chat_member(MAIN_CHANNEL_ID, user_id)
         return member.status.value in ("member", "administrator", "creator")
-    except (UserNotParticipant, ChatAdminRequired, PeerIdInvalid, Exception):
+    except Exception:
         return False
 
 
@@ -37,38 +37,37 @@ def paginate(data: list, page: int, page_size: int = 8):
 
 
 # ═══════════════════════════════════════════════════════════
-#  FLOOD-SAFE SEND / EDIT
+#  FLOOD-SAFE SEND
 # ═══════════════════════════════════════════════════════════
 
 async def safe_send(coro, retries: int = 5):
-    """
-    Jalankan coroutine Telegram dengan penanganan FloodWait otomatis.
-    - Exponential backoff jika FloodWait kecil
-    - Skip jika FloodWait > FLOOD_SLEEP_THRESHOLD
-    """
+    """Jalankan coroutine dengan penanganan FloodWait otomatis."""
     for attempt in range(retries):
         try:
             return await coro
         except FloodWait as e:
             wait = e.value + 2
             if wait > FLOOD_SLEEP_THRESHOLD:
-                log.warning(f"[FloodWait] {wait}s terlalu lama, lewati.")
+                log.warning(f"[FloodWait] {wait}s — lewati")
                 return None
-            log.warning(f"[FloodWait] Tunggu {wait}s (percobaan {attempt+1}/{retries})")
+            log.warning(f"[FloodWait] Tunggu {wait}s (percobaan {attempt+1})")
             await asyncio.sleep(wait)
-        except MessageNotModified:
-            return None
-        except MessageIdInvalid:
+        except (MessageNotModified, MessageIdInvalid):
             return None
         except Exception as e:
-            log.error(f"[safe_send] Error: {type(e).__name__}: {e}")
+            log.error(f"[safe_send] {type(e).__name__}: {e}")
             return None
-    log.error("[safe_send] Semua percobaan gagal.")
     return None
 
 
+# ═══════════════════════════════════════════════════════════
+#  SAFE EDIT  — tidak pernah crash
+# ═══════════════════════════════════════════════════════════
+
 async def safe_edit(msg, text: str, markup=None, parse_mode=None):
-    """Edit pesan dengan penanganan error."""
+    """Edit pesan; return edited message atau None kalau gagal."""
+    if msg is None:
+        return None
     try:
         kwargs = {"reply_markup": markup}
         if parse_mode:
@@ -80,21 +79,32 @@ async def safe_edit(msg, text: str, markup=None, parse_mode=None):
         await asyncio.sleep(min(e.value + 1, 10))
         return None
     except Exception as e:
-        log.error(f"[safe_edit] {type(e).__name__}: {e}")
+        log.debug(f"[safe_edit] {type(e).__name__}: {e}")
         return None
 
 
 # ═══════════════════════════════════════════════════════════
-#  NAV HELPER — "halaman berubah, bukan pesan baru"
+#  SAFE CALLBACK ANSWER  — selalu berhasil
 # ═══════════════════════════════════════════════════════════
 
-# Simpan ID pesan terakhir yang dikirim bot ke user
+async def answer_cb(cb, text: str = "", show_alert: bool = False):
+    """Panggil cb.answer() dengan aman — tidak pernah throw."""
+    try:
+        await cb.answer(text, show_alert=show_alert)
+    except Exception:
+        pass
+
+
+# ═══════════════════════════════════════════════════════════
+#  NAV HELPER — edit pesan lama, bukan kirim baru
+# ═══════════════════════════════════════════════════════════
+
 _last_bot_msg: dict[int, Message] = {}
 
 
-def store_msg(user_id: int, msg: Message):
-    """Simpan referensi pesan bot terbaru untuk user ini."""
-    _last_bot_msg[user_id] = msg
+def store_msg(user_id: int, msg):
+    if msg is not None:
+        _last_bot_msg[user_id] = msg
 
 
 def get_stored_msg(user_id: int):
@@ -104,17 +114,22 @@ def get_stored_msg(user_id: int):
 async def nav_to(client, user_id: int, chat_id: int, text: str,
                  inline_markup=None, reply_markup=None, parse_mode=None):
     """
-    Navigasi ke 'halaman' baru:
-    1. Coba edit pesan terakhir (pesan berubah, bukan baru)
-    2. Jika gagal (pesan terlalu lama/dihapus), kirim pesan baru
+    Navigasi ke halaman baru:
+    1. Coba edit pesan terakhir yang disimpan
+    2. Jika gagal → kirim pesan baru
     """
-    prev = _last_bot_msg.get(user_id)
+    prev   = _last_bot_msg.get(user_id)
     edited = None
 
     if prev:
         edited = await safe_edit(prev, text, markup=inline_markup, parse_mode=parse_mode)
 
-    if not edited:
+    if edited:
+        store_msg(user_id, edited)
+        return edited
+
+    # Fallback: kirim pesan baru
+    try:
         kwargs = {}
         if inline_markup:
             kwargs["reply_markup"] = inline_markup
@@ -122,16 +137,12 @@ async def nav_to(client, user_id: int, chat_id: int, text: str,
             kwargs["reply_markup"] = reply_markup
         if parse_mode:
             kwargs["parse_mode"] = parse_mode
-        try:
-            msg = await client.send_message(chat_id, text, **kwargs)
-            store_msg(user_id, msg)
-            return msg
-        except Exception as e:
-            log.error(f"[nav_to] send gagal: {e}")
-            return None
-    else:
-        store_msg(user_id, edited)
-        return edited
+        msg = await client.send_message(chat_id, text, **kwargs)
+        store_msg(user_id, msg)
+        return msg
+    except Exception as e:
+        log.error(f"[nav_to] gagal kirim: {e}")
+        return None
 
 
 # ═══════════════════════════════════════════════════════════
@@ -151,8 +162,7 @@ def progress_bar(val: int, total: int, width: int = 10) -> str:
 
 async def blast_message(client: Client, user_ids: list, text: str,
                         parse_mode=None, delay: float = 0.05):
-    """Kirim broadcast ke list user_ids. Return (success, fail)."""
-    from config import FLOOD_SLEEP_THRESHOLD
+    """Kirim pesan ke banyak user. Return (success_count, fail_count)."""
     success = 0
     fail    = 0
     for uid in user_ids:
@@ -163,12 +173,13 @@ async def blast_message(client: Client, user_ids: list, text: str,
             await client.send_message(uid, text, **kwargs)
             success += 1
         except FloodWait as e:
-            wait = e.value + 2
-            if wait > FLOOD_SLEEP_THRESHOLD:
-                log.warning(f"[broadcast] FloodWait {wait}s — berhenti sementara")
-            await asyncio.sleep(min(wait, FLOOD_SLEEP_THRESHOLD))
+            wait = min(e.value + 2, FLOOD_SLEEP_THRESHOLD)
+            await asyncio.sleep(wait)
             try:
-                await client.send_message(uid, text)
+                kwargs2 = {}
+                if parse_mode:
+                    kwargs2["parse_mode"] = parse_mode
+                await client.send_message(uid, text, **kwargs2)
                 success += 1
             except Exception:
                 fail += 1
