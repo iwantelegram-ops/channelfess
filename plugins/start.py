@@ -168,71 +168,68 @@ async def info_bot(client: Client, message: Message):
 
 
 # ═══════════════════════════════════════════════════════════
-#  📖 Tutorial (Menggunakan Struktur Penutup Tombol Yang Benar)
+#  📖 Tutorial
 # ═══════════════════════════════════════════════════════════
 
 @Client.on_callback_query(filters.regex(r"^tutorial$"))
 async def cb_tutorial(client: Client, cb: CallbackQuery):
     answered = False
+    SEP = "─" * 28
+    text = (
+        f"📖 <b>Tutorial {BOT_NAME}</b>\n"
+        f"<code>{SEP}</code>\n\n"
+        f"1️⃣ <b>Daftarkan Channel</b>\n"
+        f"• Buka pengaturan channel\n"
+        f"  → <b>Administrator → Tambah Admin</b>\n"
+        f"• Cari <b>@{BOT_USERNAME}</b>, aktifkan izin:\n"
+        f"  ✅ Kirim · Edit · Hapus Pesan\n"
+        f"• Simpan → channel <b>otomatis terdaftar</b> ✅\n\n"
+        f"2️⃣ <b>Aktifkan / Pause Repost</b>\n"
+        f"• <b>📂 My Channel</b> → pilih channel\n"
+        f"• Ketuk <b>▶️ Aktifkan</b> atau <b>⏸ Pause</b>\n\n"
+        f"3️⃣ <b>Hapus Repost Sinkron</b>\n"
+        f"• Hapus postingan di <b>channelmu sendiri</b>\n"
+        f"• Bot otomatis hapus repost di channel utama\n"
+        f"• Syarat sinkron berjalan:\n"
+        f"  ✅ Bot masih Admin di channelmu\n"
+        f"  ✅ Izin <b>Hapus Pesan</b> aktif\n"
+        f"  ✅ Fitur Auto-Hapus diaktifkan owner\n"
+        f"  ⚠️ Deteksi terjadi saat ada postingan baru\n\n"
+        f"4️⃣ <b>Notifikasi</b>\n"
+        f"• <b>🔔 Notifikasi</b> → atur notif repost, blacklist, status\n\n"
+        f"5️⃣ <b>Repost tidak muncul?</b>\n"
+        f"• Status channel harus <b>Aktif ▶️</b>\n"
+        f"• Bot harus masih jadi <b>Admin</b>\n"
+        f"• Konten harus berupa <b>foto atau video</b>\n"
+        f"• Periksa kata terlarang (blacklist)\n\n"
+        f"<code>{SEP}</code>\n"
+        f"📬 Bantuan: @{OWNER_USERNAME or BOT_USERNAME}"
+    )
+    markup = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "➕ Tambah Bot ke Channel",
+            url=(f"https://t.me/{BOT_USERNAME}?startchannel=true"
+                 f"&admin=post_messages+edit_messages+delete_messages+invite_users"),
+        )
+    ]])
     try:
-        # Meniru metode tombol normal lainnya: jawab callback SEGERA di awal 
-        # agar Telegram tahu tombol berhasil diklik dan menghentikan status loading.
-        await answer_cb(cb, "Memuat tutorial...")
+        # Kirim sinyal respon ke Telegram agar tombol tidak macet/stuck
+        await answer_cb(cb)
         answered = True
 
-        SEP = "─" * 28
-        text = (
-            f"📖 <b>Tutorial {BOT_NAME}</b>\n"
-            f"<code>{SEP}</code>\n\n"
-            f"1️⃣ <b>Daftarkan Channel</b>\n"
-            f"• Buka pengaturan channel\n"
-            f"  → <b>Administrator → Tambah Admin</b>\n"
-            f"• Cari <b>@{BOT_USERNAME}</b>, aktifkan izin:\n"
-            f"  ✅ Kirim · Edit · Hapus Pesan\n"
-            f"• Simpan → channel <b>otomatis terdaftar</b> ✅\n\n"
-            f"2️⃣ <b>Aktifkan / Pause Repost</b>\n"
-            f"• <b>📂 My Channel</b> → pilih channel\n"
-            f"• Ketuk <b>▶️ Aktifkan</b> atau <b>⏸ Pause</b>\n\n"
-            f"3️⃣ <b>Hapus Repost Sinkron</b>\n"
-            f"• Hapus postingan di <b>channelmu sendiri</b>\n"
-            f"• Bot otomatis hapus repost di channel utama\n"
-            f"• Syarat sinkron berjalan:\n"
-            f"  ✅ Bot masih Admin di channelmu\n"
-            f"  ✅ Izin <b>Hapus Pesan</b> aktif\n"
-            f"  ✅ Fitur Auto-Hapus diaktifkan owner\n"
-            f"  ⚠️ Deteksi terjadi saat ada postingan baru\n\n"
-            f"4️⃣ <b>Notifikasi</b>\n"
-            f"• <b>🔔 Notifikasi</b> → atur notif repost, blacklist, status\n\n"
-            f"5️⃣ <b>Repost tidak muncul?</b>\n"
-            f"• Status channel harus <b>Aktif ▶️</b>\n"
-            f"• Bot harus masih jadi <b>Admin</b>\n"
-            f"• Konten harus berupa <b>foto atau video</b>\n"
-            f"• Periksa kata terlarang (blacklist)\n\n"
-            f"<code>{SEP}</code>\n"
-            f"📬 Bantuan: @{OWNER_USERNAME or BOT_USERNAME}"
-        )
-        markup = InlineKeyboardMarkup([[
-            InlineKeyboardButton(
-                "➕ Tambah Bot ke Channel",
-                url=(f"https://t.me/{BOT_USERNAME}?startchannel=true"
-                     f"&admin=post_messages+edit_messages+delete_messages+invite_users"),
-            )
-        ]])
-
-        # Coba edit pesan lama
+        # Coba edit pesan lama, jika gagal kirim pesan baru
         res = await safe_edit(cb.message, text, markup=markup, parse_mode=PM)
         if res is None:
-            await client.send_message(cb.message.chat.id, text, reply_markup=markup, parse_mode=PM)
-
+            await client.send_message(cb.message.chat.id, text,
+                                      reply_markup=markup, parse_mode=PM)
     except Exception as e:
-        log.error(f"[cb_tutorial] Terjadi kendala saat merender tutorial: {e}")
-        # Jalur alternatif darurat (Kirim pesan baru jika proses edit gagal)
+        log.error(f"[cb_tutorial] {e}")
         try:
-            await client.send_message(cb.message.chat.id, text, reply_markup=markup, parse_mode=PM)
+            await client.send_message(cb.message.chat.id, text,
+                                      reply_markup=markup, parse_mode=PM)
         except Exception as e2:
-            log.error(f"[cb_tutorial] Fallback send_message gagal: {e2}")
+            log.error(f"[cb_tutorial] Fallback gagal: {e2}")
     finally:
-        # Jika di atas terjadi crash parah sebelum callback terjawab, 
-        # blok ini menjamin tombol tetap dilepas status loading-nya (tidak stuck).
+        # Memastikan penutupan state tombol jika terjadi error tak terduga
         if not answered:
             await answer_cb(cb)
