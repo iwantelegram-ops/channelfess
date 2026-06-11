@@ -17,7 +17,7 @@ from datetime import datetime
 OWNER_WELCOME = (
     "⚡ **FessBot — Control Panel**\n\n"
     "`System online · All services running`\n\n"
-    "Pilih menu di bawah."
+    "Gunakan menu di bawah layar. 👇"
 )
 
 USER_NOT_JOINED = (
@@ -53,18 +53,6 @@ def user_keyboard():
         resize_keyboard=True,
     )
 
-def owner_inline():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("📊 Dashboard",     callback_data="owner_stats"),
-            InlineKeyboardButton("📋 Partner",       callback_data="list_partner_0"),
-        ],
-        [
-            InlineKeyboardButton("📣 Broadcast",     callback_data="broadcast_menu"),
-            InlineKeyboardButton("🔧 Tools",         callback_data="tools_menu"),
-        ],
-    ])
-
 # ── Handler /start ────────────────────────────────────────
 
 @Client.on_message(filters.command("start") & filters.private, group=1)
@@ -74,8 +62,7 @@ async def start(client: Client, message: Message):
 
     # Owner
     if user_id == OWNER_ID:
-        await message.reply(OWNER_WELCOME, reply_markup=owner_inline())
-        await message.reply("Shortcut:", reply_markup=owner_keyboard())
+        await message.reply(OWNER_WELCOME, reply_markup=owner_keyboard())
         return
 
     # Maintenance

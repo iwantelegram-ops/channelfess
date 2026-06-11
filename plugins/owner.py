@@ -14,7 +14,6 @@ from pyrogram import Client, filters
 from pyrogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton,
 )
 from pyrogram.errors import MessageNotModified
 from config import OWNER_ID
@@ -27,6 +26,7 @@ from db.helpers import (
 )
 from db.mongo import posts, users
 from utils import paginate
+from plugins.start import owner_keyboard
 
 PAGE_SIZE = 8
 
@@ -74,17 +74,8 @@ def _nav(back_label=None, back_cb=None):
 
 
 # ══════════════════════════════════════════════════════════
-#  REPLY KEYBOARD (tombol bawah layar)
+#  REPLY KEYBOARD — diimpor dari plugins.start
 # ══════════════════════════════════════════════════════════
-
-def owner_keyboard():
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("📊 Dashboard"), KeyboardButton("📋 Partner")],
-            [KeyboardButton("📣 Broadcast"), KeyboardButton("🔧 Tools")],
-        ],
-        resize_keyboard=True,
-    )
 
 # Handler setiap tombol keyboard → buka panel inline
 @Client.on_message(filters.text & filters.private & filters.regex("^📊 Dashboard$"))
@@ -161,7 +152,8 @@ async def _send_stats(client, source, edit=False):
 @Client.on_message(filters.command("stats") & filters.private)
 @owner_only
 async def cmd_stats(client, message):
-    await _send_stats(client, message, edit=False)
+    await message.reply(_stats_text(), reply_markup=_stats_markup())
+    await message.reply("Menu:", reply_markup=owner_keyboard())
 
 @Client.on_callback_query(filters.regex("^owner_stats$"))
 @owner_only
