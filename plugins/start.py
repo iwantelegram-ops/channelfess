@@ -130,42 +130,7 @@ async def start(client: Client, message: Message):
     store_msg(user_id, msg)
 
 
-# ═══════════════════════════════════════════════════════════
-#  ✅ RECHECK JOIN
-# ═══════════════════════════════════════════════════════════
-
-@Client.on_callback_query(filters.regex("^recheck_join$"))
-async def cb_recheck_join(client: Client, cb):
-    user_id   = cb.from_user.id
-    user_name = cb.from_user.first_name or "Pengguna"
-    try:
-        joined = await check_membership(client, user_id)
-        if not joined:
-            await answer_cb(cb, "❌ Kamu belum join. Coba join dulu ya!", show_alert=True)
-            return
-
-        upsert_user(user_id, {
-            "joined":    True,
-            "joined_at": datetime.now(timezone.utc),
-        })
-        await answer_cb(cb, "✅ Berhasil! Selamat datang.")
-        welcome_text = (
-            f"⚡ <b>Halo, {user_name}!</b>\n\n"
-            f"<b>FessBot</b> otomatis meneruskan foto &amp; video dari channelmu "
-            f"ke channel utama.\n\n"
-            f"<b>Cara setup:</b>\n"
-            f"1️⃣  Tambahkan bot sebagai <b>Admin</b> di channelmu\n"
-            f"2️⃣  Channel otomatis terdaftar\n"
-            f"3️⃣  Konten di-repost real-time ✅\n\n"
-            f"Buka <b>My Channel</b> untuk mulai. 👇"
-        )
-        await client.send_message(
-            cb.message.chat.id, welcome_text,
-            reply_markup=user_keyboard(), parse_mode=PM,
-        )
-    except Exception as e:
-        log.error(f"[cb_recheck_join] {e}")
-        await answer_cb(cb, "❌ Error, coba lagi.", show_alert=True)
+# recheck_join ditangani di membership.py
 
 
 # ═══════════════════════════════════════════════════════════
