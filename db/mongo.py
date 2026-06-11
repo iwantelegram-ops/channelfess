@@ -1,7 +1,7 @@
 """MongoDB connection & semua collections."""
 import dns.resolver
 dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
-dns.resolver.default_resolver.nameservers = ["1.1.1.1", "1.0.0.1"]
+dns.resolver.default_resolver.nameservers = ["8.8.8.8", "8.8.4.4"]
 
 from pymongo import MongoClient, DESCENDING, ASCENDING
 from config import MONGO_URI
