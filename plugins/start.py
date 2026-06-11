@@ -213,11 +213,11 @@ async def cb_tutorial(client: Client, cb: CallbackQuery):
         )
     ]])
     try:
-        # Kirim sinyal respon ke Telegram agar tombol tidak macet/stuck
+        # Menyamakan metode dengan tombol lain: Jawab callback di awal agar rilis loading
         await answer_cb(cb)
         answered = True
 
-        # Coba edit pesan lama, jika gagal kirim pesan baru
+        # Eksekusi tampilan pesan tutorial
         res = await safe_edit(cb.message, text, markup=markup, parse_mode=PM)
         if res is None:
             await client.send_message(cb.message.chat.id, text,
@@ -230,6 +230,5 @@ async def cb_tutorial(client: Client, cb: CallbackQuery):
         except Exception as e2:
             log.error(f"[cb_tutorial] Fallback gagal: {e2}")
     finally:
-        # Memastikan penutupan state tombol jika terjadi error tak terduga
         if not answered:
             await answer_cb(cb)
