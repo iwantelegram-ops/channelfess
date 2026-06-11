@@ -107,10 +107,10 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
                     f"🎉 **Channel berhasil terhubung!**\n\n"
                     f"📡 **{update.chat.title}** sudah terdaftar di FessBot.\n\n"
                     f"Aktifkan sekarang agar postinganmu mulai di-repost ke channel utama?",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("✅ Aktifkan", callback_data=f"confirm_sync_{channel_id}"),
-                        InlineKeyboardButton("Nanti aja",  callback_data=f"confirm_nosync_{channel_id}"),
-                    ]]),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✅ Ya, Aktifkan Sekarang", callback_data=f"confirm_sync_{channel_id}")],
+                        [InlineKeyboardButton("⏸️ Nanti Saja", callback_data=f"confirm_nosync_{channel_id}")],
+                    ]),
                 ))
 
     elif new_status in (ChatMemberStatus.MEMBER, ChatMemberStatus.LEFT, ChatMemberStatus.BANNED):
@@ -155,9 +155,9 @@ async def cb_confirm_sync(client: Client, cb):
 
         try:
             await cb.message.edit_text(
-                f"▶️ **Sinkronisasi aktif!**\n\n"
+                f"✅ **Channel diaktifkan!**\n\n"
                 f"📡 **{partner.get('channel_name', channel_id)}** kini meneruskan "
-                f"postingan ke channel utama. 🚀\n\n"
+                f"postingan ke channel utama secara real-time. 🚀\n\n"
                 f"Buka **My Channel** untuk kelola kapan saja.",
                 reply_markup=InlineKeyboardMarkup([]),
             )
@@ -189,9 +189,9 @@ async def cb_confirm_nosync(client: Client, cb):
 
         try:
             await cb.message.edit_text(
-                f"⏸ **Oke, disimpan dulu.**\n\n"
+                f"⏸ **Tidak diaktifkan.**\n\n"
                 f"📡 **{partner.get('channel_name', channel_id)}** terdaftar tapi belum aktif.\n"
-                f"Aktifkan lewat **My Channel** kapan saja.",
+                f"Anda bisa mengubahnya kapan saja di **My Channel**.",
                 reply_markup=InlineKeyboardMarkup([]),
             )
         except Exception:
@@ -266,10 +266,10 @@ async def cmd_daftarkan(client: Client, message: Message):
 
     await message.reply(
         f"🎉 **Channel terdaftar!**\n\n📡 **{chat.title}**\n\nAktifkan sekarang?",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Aktifkan", callback_data=f"confirm_sync_{channel_id}"),
-            InlineKeyboardButton("Nanti aja",  callback_data=f"confirm_nosync_{channel_id}"),
-        ]]),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Ya, Aktifkan Sekarang", callback_data=f"confirm_sync_{channel_id}")],
+            [InlineKeyboardButton("⏸️ Nanti Saja", callback_data=f"confirm_nosync_{channel_id}")],
+        ]),
     )
 
 
