@@ -1,11 +1,8 @@
 """
-Broadcast interaktif — owner ketuk tombol → input pesan → preview → kirim.
-Tidak ada command /broadcast lagi, semua lewat tombol reply keyboard.
-Parse mode: HTML.
+Broadcast interaktif — tombol → ketik → preview → kirim.
+FIX: owner_only_dec selalu answer callback; try/except di semua handler.
 """
-import asyncio
 import logging
-from datetime import datetime, timezone
 from pyrogram import Client, filters
 from pyrogram.types import (
     Message, CallbackQuery,
@@ -19,22 +16,28 @@ from db.helpers import (
     save_broadcast, get_broadcast_history,
     count_users,
 )
-from utils import safe_send, safe_edit, nav_to, blast_message, store_msg
+from utils import safe_edit, nav_to, blast_message, store_msg, answer_cb
 
 log = logging.getLogger("fessbot.broadcast")
 PM  = ParseMode.HTML
 
-# ── State ──────────────────────────────────────────────────
-# owner_id → {"mode": "all"|"partner", "preview_text": str}
+# State: owner_id → {"mode": "all"|"partner", "preview_text"?: str}
 _bc_state: dict[int, dict] = {}
 
 
-def owner_only_dec(func):
+# ═══════════════════════════════════════════════════════════
+#  DEKORATOR owner-only  (FIX: selalu answer callback)
+# ═══════════════════════════════════════════════════════════
+
+def owner_only(func):
     import functools
     @functools.wraps(func)
     async def wrapper(client, obj, *args, **kwargs):
-        uid = obj.from_user.id if hasattr(obj, "from_user") else 0
+        uid = getattr(getattr(obj, "from_user", None), "id", 0)
         if uid != OWNER_ID:
+            # Untuk callback: answer dulu baru return
+            if hasattr(obj, "answer"):
+                await answer_cb(obj, "🚫 Bukan owner.", show_alert=True)
             return
         return await func(client, obj, *args, **kwargs)
     return wrapper
@@ -45,29 +48,22 @@ def owner_only_dec(func):
 # ═══════════════════════════════════════════════════════════
 
 def kb_broadcast_menu():
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("👥 Broadcast Semua User"), KeyboardButton("📡 Broadcast Partner")],
-            [KeyboardButton("📜 Riwayat Broadcast"),    KeyboardButton("🏠 Menu Utama")],
-        ],
-        resize_keyboard=True,
-    )
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("👥 Broadcast Semua User"), KeyboardButton("📡 Broadcast Partner")],
+        [KeyboardButton("📜 Riwayat Broadcast"),    KeyboardButton("🏠 Menu Utama")],
+    ], resize_keyboard=True)
 
 def kb_main():
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("📊 Dashboard"), KeyboardButton("📋 Partner")],
-            [KeyboardButton("📣 Broadcast"), KeyboardButton("🔧 Tools")],
-            [KeyboardButton("📝 Aktivitas"), KeyboardButton("⚙️ Pengaturan")],
-        ],
-        resize_keyboard=True,
-    )
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("📊 Dashboard"),  KeyboardButton("📋 Partner")],
+        [KeyboardButton("📣 Broadcast"),  KeyboardButton("🔧 Tools")],
+        [KeyboardButton("📝 Aktivitas"),  KeyboardButton("⚙️ Pengaturan")],
+    ], resize_keyboard=True)
 
 def kb_waiting_input():
-    return ReplyKeyboardMarkup(
-        [[KeyboardButton("❌ Batal Broadcast")]],
-        resize_keyboard=True,
-    )
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("❌ Batal Broadcast")],
+    ], resize_keyboard=True)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -75,53 +71,48 @@ def kb_waiting_input():
 # ═══════════════════════════════════════════════════════════
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^📣 Broadcast$"))
-@owner_only_dec
+@owner_only
 async def kb_broadcast_menu_btn(client: Client, message: Message):
-    uid       = message.from_user.id
-    total_u   = count_users()
-    partners  = get_all_partners()
-    total_p   = len({p["owner_id"] for p in partners if p.get("owner_id")})
+    uid      = message.from_user.id
+    total_u  = count_users()
+    partners = get_all_partners()
+    total_p  = len({p["owner_id"] for p in partners if p.get("owner_id")})
 
     text = (
         f"📣 <b>Broadcast Center</b>\n"
         f"<code>{'─' * 28}</code>\n\n"
-        f"👥 User terdaftar        <code>{total_u}</code>\n"
-        f"📡 Owner partner unik   <code>{total_p}</code>\n\n"
+        f"👥 User terdaftar       <code>{total_u}</code>\n"
+        f"📡 Owner partner unik  <code>{total_p}</code>\n\n"
         f"Pilih target broadcast:"
     )
     msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
     if not msg:
         msg = await message.reply(text, parse_mode=PM)
-    store_msg(uid, msg)
-    await message.reply("⬇️", reply_markup=kb_broadcast_menu())
+        store_msg(uid, msg)
+    await message.reply("‎", reply_markup=kb_broadcast_menu())
 
-
-# ── Tombol Broadcast Semua ─────────────────────────────────
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^👥 Broadcast Semua User$"))
-@owner_only_dec
+@owner_only
 async def kb_bc_all_users(client: Client, message: Message):
-    uid = message.from_user.id
-    _bc_state[uid] = {"mode": "all"}
-    total = count_users()
-    text  = (
+    uid             = message.from_user.id
+    _bc_state[uid]  = {"mode": "all"}
+    total           = count_users()
+    text = (
         f"👥 <b>Broadcast ke Semua User</b>\n"
         f"<code>{'─' * 28}</code>\n\n"
         f"Target: <code>{total}</code> user\n\n"
-        f"✏️ Ketik pesan broadcast kamu:\n"
-        f"<i>(Supports HTML bold, italic, kode, link)</i>"
+        f"✏️ Ketik pesan broadcast kamu:"
     )
     msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
     if not msg:
         msg = await message.reply(text, parse_mode=PM)
-    store_msg(uid, msg)
-    await message.reply("⬇️ Ketik pesan:", reply_markup=kb_waiting_input())
+        store_msg(uid, msg)
+    await message.reply("‎", reply_markup=kb_waiting_input())
 
-
-# ── Tombol Broadcast Partner ───────────────────────────────
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^📡 Broadcast Partner$"))
-@owner_only_dec
+@owner_only
 async def kb_bc_partner(client: Client, message: Message):
     uid      = message.from_user.id
     partners = get_all_partners()
@@ -131,20 +122,17 @@ async def kb_bc_partner(client: Client, message: Message):
         f"📡 <b>Broadcast ke Owner Partner</b>\n"
         f"<code>{'─' * 28}</code>\n\n"
         f"Target: <code>{len(owners)}</code> owner partner\n\n"
-        f"✏️ Ketik pesan broadcast kamu:\n"
-        f"<i>(Supports HTML bold, italic, kode, link)</i>"
+        f"✏️ Ketik pesan broadcast kamu:"
     )
     msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
     if not msg:
         msg = await message.reply(text, parse_mode=PM)
-    store_msg(uid, msg)
-    await message.reply("⬇️ Ketik pesan:", reply_markup=kb_waiting_input())
+        store_msg(uid, msg)
+    await message.reply("‎", reply_markup=kb_waiting_input())
 
-
-# ── Batal ──────────────────────────────────────────────────
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^❌ Batal Broadcast$"))
-@owner_only_dec
+@owner_only
 async def kb_cancel_broadcast(client: Client, message: Message):
     uid = message.from_user.id
     _bc_state.pop(uid, None)
@@ -152,36 +140,31 @@ async def kb_cancel_broadcast(client: Client, message: Message):
     msg  = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
     if not msg:
         msg = await message.reply(text, parse_mode=PM)
-    store_msg(uid, msg)
-    await message.reply("⬇️", reply_markup=kb_main())
+        store_msg(uid, msg)
+    await message.reply("‎", reply_markup=kb_main())
 
-
-# ── Riwayat Broadcast ──────────────────────────────────────
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^📜 Riwayat Broadcast$"))
-@owner_only_dec
+@owner_only
 async def kb_bc_history(client: Client, message: Message):
     uid     = message.from_user.id
     history = get_broadcast_history(limit=5)
 
     if not history:
-        text = (
-            f"📜 <b>Riwayat Broadcast</b>\n\n"
-            f"Belum ada broadcast yang dikirim."
-        )
+        text = "📜 <b>Riwayat Broadcast</b>\n\nBelum ada broadcast yang dikirim."
     else:
-        lines = [f"📜 <b>Riwayat Broadcast (5 terakhir)</b>\n<code>{'─' * 28}</code>\n"]
+        lines = [f"📜 <b>Riwayat Broadcast</b>\n<code>{'─' * 28}</code>"]
         for bc in history:
             sent_at = bc.get("sent_at")
             ts      = sent_at.strftime("%d %b %Y %H:%M") if sent_at else "—"
             target  = bc.get("target", "—")
-            msg_pre = bc.get("message", "")[:60]
+            preview = (bc.get("message") or "")[:60]
             suc     = bc.get("success", 0)
             fail    = bc.get("fail", 0)
             lines.append(
                 f"\n📅 <code>{ts}</code>\n"
                 f"Target  <b>{target}</b>\n"
-                f"Pesan   <i>{msg_pre}…</i>\n"
+                f"Pesan   <i>{preview}…</i>\n"
                 f"Hasil   ✅ <code>{suc}</code>  ❌ <code>{fail}</code>"
             )
         text = "\n".join(lines)
@@ -189,43 +172,45 @@ async def kb_bc_history(client: Client, message: Message):
     msg = await nav_to(client, uid, message.chat.id, text, parse_mode=PM)
     if not msg:
         msg = await message.reply(text, parse_mode=PM)
-    store_msg(uid, msg)
+        store_msg(uid, msg)
 
 
 # ═══════════════════════════════════════════════════════════
-#  TERIMA INPUT PESAN BROADCAST
+#  TERIMA INPUT PESAN BROADCAST  (group=5, setelah owner handlers)
 # ═══════════════════════════════════════════════════════════
+
+BROADCAST_MENU_BUTTONS = {
+    "📊 Dashboard", "📋 Partner", "📣 Broadcast", "🔧 Tools",
+    "📝 Aktivitas", "⚙️ Pengaturan", "🏠 Menu Utama",
+    "👥 Broadcast Semua User", "📡 Broadcast Partner",
+    "📜 Riwayat Broadcast", "❌ Batal Broadcast",
+}
+
 
 @Client.on_message(filters.text & filters.private, group=5)
-@owner_only_dec
+@owner_only
 async def receive_broadcast_input(client: Client, message: Message):
-    uid = message.from_user.id
+    uid   = message.from_user.id
     state = _bc_state.get(uid)
+
+    # Tidak sedang menunggu input atau sudah ada preview
     if not state or "preview_text" in state:
-        return  # bukan sedang menunggu input
+        return
 
     text_input = message.text
-
-    # Jangan tangkap tombol menu lain
-    MENU_BUTTONS = {
-        "📊 Dashboard", "📋 Partner", "📣 Broadcast", "🔧 Tools",
-        "📝 Aktivitas", "⚙️ Pengaturan", "🏠 Menu Utama",
-        "👥 Broadcast Semua User", "📡 Broadcast Partner",
-        "📜 Riwayat Broadcast", "❌ Batal Broadcast",
-    }
-    if text_input in MENU_BUTTONS:
+    if text_input in BROADCAST_MENU_BUTTONS:
         return
 
     mode = state["mode"]
     _bc_state[uid]["preview_text"] = text_input
 
     if mode == "all":
-        total  = count_users()
+        total        = count_users()
         target_label = f"semua user (<code>{total}</code>)"
     else:
-        partners = get_all_partners()
-        owners   = {p["owner_id"] for p in partners if p.get("owner_id")}
-        total    = len(owners)
+        partners     = get_all_partners()
+        owners       = {p["owner_id"] for p in partners if p.get("owner_id")}
+        total        = len(owners)
         target_label = f"owner partner (<code>{total}</code>)"
 
     preview = (
@@ -250,90 +235,106 @@ async def receive_broadcast_input(client: Client, message: Message):
     store_msg(uid, msg)
 
 
-# ── Konfirmasi Kirim ───────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+#  CALLBACK: CONFIRM / EDIT / CANCEL
+# ═══════════════════════════════════════════════════════════
 
 @Client.on_callback_query(filters.regex("^bc_confirm$"))
-@owner_only_dec
+@owner_only
 async def cb_bc_confirm(client: Client, cb: CallbackQuery):
-    uid   = cb.from_user.id
-    state = _bc_state.get(uid)
-    if not state or "preview_text" not in state:
-        await cb.answer("State kadaluarsa. Mulai ulang.", show_alert=True)
-        return
+    answered = False
+    try:
+        uid   = cb.from_user.id
+        state = _bc_state.get(uid)
 
-    mode       = state["mode"]
-    bc_text    = state["preview_text"]
+        if not state or "preview_text" not in state:
+            await answer_cb(cb, "State kadaluarsa. Mulai ulang.", True)
+            answered = True
+            return
 
-    if mode == "all":
-        targets      = get_all_user_ids()
-        target_label = "Semua User"
-    else:
-        partners     = get_all_partners()
-        targets      = list({p["owner_id"] for p in partners if p.get("owner_id")})
-        target_label = "Owner Partner"
+        mode       = state["mode"]
+        bc_text    = state["preview_text"]
+        _bc_state.pop(uid, None)
 
-    _bc_state.pop(uid, None)
+        if mode == "all":
+            targets      = get_all_user_ids()
+            target_label = "Semua User"
+        else:
+            partners = get_all_partners()
+            targets  = list({p["owner_id"] for p in partners if p.get("owner_id")})
+            target_label = "Owner Partner"
 
-    # Update pesan jadi "sedang mengirim..."
-    await safe_edit(
-        cb.message,
-        f"📤 <b>Mengirim broadcast...</b>\n\n"
-        f"Target: <code>{len(targets)}</code> {target_label.lower()}\n"
-        f"<i>Harap tunggu...</i>",
-        parse_mode=PM,
-    )
-    await cb.answer("Mengirim...", show_alert=False)
+        await safe_edit(
+            cb.message,
+            f"📤 <b>Mengirim broadcast…</b>\n\n"
+            f"Target: <code>{len(targets)}</code> {target_label.lower()}\n"
+            f"<i>Harap tunggu…</i>",
+            parse_mode=PM,
+        )
+        await answer_cb(cb, "Mengirim…")
+        answered = True
 
-    success, fail = await blast_message(
-        client, targets, bc_text,
-        parse_mode=PM,
-        delay=BROADCAST_DELAY,
-    )
-    save_broadcast(uid, target_label, bc_text, success, fail)
+        success, fail = await blast_message(
+            client, targets, bc_text, parse_mode=PM, delay=BROADCAST_DELAY
+        )
+        save_broadcast(uid, target_label, bc_text, success, fail)
 
-    result_text = (
-        f"✅ <b>Broadcast Selesai!</b>\n"
-        f"<code>{'─' * 28}</code>\n\n"
-        f"Target     <b>{target_label}</b>\n"
-        f"Berhasil   <code>{success}</code> ✅\n"
-        f"Gagal      <code>{fail}</code> ❌\n"
-        f"Total      <code>{success+fail}</code>"
-    )
-    await safe_edit(cb.message, result_text, parse_mode=PM)
+        await safe_edit(
+            cb.message,
+            f"✅ <b>Broadcast Selesai!</b>\n"
+            f"<code>{'─' * 28}</code>\n\n"
+            f"Target     <b>{target_label}</b>\n"
+            f"Berhasil   <code>{success}</code> ✅\n"
+            f"Gagal      <code>{fail}</code> ❌\n"
+            f"Total      <code>{success+fail}</code>",
+            parse_mode=PM,
+        )
+    except Exception as e:
+        log.error(f"[cb_bc_confirm] {e}")
+    finally:
+        if not answered:
+            await answer_cb(cb)
 
-
-# ── Edit Ulang ─────────────────────────────────────────────
 
 @Client.on_callback_query(filters.regex("^bc_edit$"))
-@owner_only_dec
+@owner_only
 async def cb_bc_edit(client: Client, cb: CallbackQuery):
-    uid   = cb.from_user.id
-    state = _bc_state.get(uid)
-    if not state:
-        await cb.answer("State kadaluarsa.", show_alert=True)
-        return
+    answered = False
+    try:
+        uid   = cb.from_user.id
+        state = _bc_state.get(uid)
 
-    # Reset preview, minta input ulang
-    state.pop("preview_text", None)
-    mode = state.get("mode", "all")
-    text = (
-        f"✏️ <b>Edit Pesan Broadcast</b>\n\n"
-        f"Ketik pesan baru kamu:"
-    )
-    await safe_edit(cb.message, text, parse_mode=PM)
-    await cb.answer("Ketik pesan baru.", show_alert=False)
+        if not state:
+            await answer_cb(cb, "State kadaluarsa.", True)
+            answered = True
+            return
 
+        state.pop("preview_text", None)
+        await safe_edit(
+            cb.message,
+            "✏️ <b>Edit Pesan Broadcast</b>\n\nKetik pesan baru kamu:",
+            parse_mode=PM,
+        )
+        await answer_cb(cb, "Ketik pesan baru.")
+        answered = True
+    except Exception as e:
+        log.error(f"[cb_bc_edit] {e}")
+    finally:
+        if not answered:
+            await answer_cb(cb)
 
-# ── Batal dari Inline ──────────────────────────────────────
 
 @Client.on_callback_query(filters.regex("^bc_cancel$"))
-@owner_only_dec
+@owner_only
 async def cb_bc_cancel(client: Client, cb: CallbackQuery):
-    uid = cb.from_user.id
-    _bc_state.pop(uid, None)
-    await safe_edit(
-        cb.message,
-        "❌ <b>Broadcast dibatalkan.</b>",
-        parse_mode=PM,
-    )
-    await cb.answer("Dibatalkan.", show_alert=False)
+    answered = False
+    try:
+        _bc_state.pop(cb.from_user.id, None)
+        await safe_edit(cb.message, "❌ <b>Broadcast dibatalkan.</b>", parse_mode=PM)
+        await answer_cb(cb, "Dibatalkan.")
+        answered = True
+    except Exception as e:
+        log.error(f"[cb_bc_cancel] {e}")
+    finally:
+        if not answered:
+            await answer_cb(cb)

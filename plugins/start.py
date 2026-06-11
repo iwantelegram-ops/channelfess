@@ -16,7 +16,7 @@ from db.helpers import (
     count_partners, get_active_partners, count_users,
 )
 from db.mongo import posts
-from utils import check_membership, store_msg
+from utils import check_membership, store_msg, nav_to, answer_cb, safe_edit
 
 log = logging.getLogger("fessbot.start")
 PM  = ParseMode.HTML
@@ -132,12 +132,55 @@ async def start(client: Client, message: Message):
 
 
 # ═══════════════════════════════════════════════════════════
+#  ✅ RECHECK JOIN
+# ═══════════════════════════════════════════════════════════
+
+@Client.on_callback_query(filters.regex("^recheck_join$"))
+async def cb_recheck_join(client: Client, cb):
+    user_id   = cb.from_user.id
+    user_name = cb.from_user.first_name or "Pengguna"
+    try:
+        joined = await check_membership(client, user_id)
+        if not joined:
+            await answer_cb(cb, "❌ Kamu belum join. Coba join dulu ya!", show_alert=True)
+            return
+
+        upsert_user(user_id, {
+            "joined":    True,
+            "joined_at": datetime.now(timezone.utc),
+        })
+        await safe_edit(
+            cb.message,
+            f"⚡ <b>Halo, {user_name}!</b>\n\n"
+            f"<b>FessBot</b> otomatis meneruskan foto &amp; video dari channelmu "
+            f"ke channel utama.\n\n"
+            f"<b>Cara setup:</b>\n"
+            f"1️⃣  Tambahkan bot sebagai <b>Admin</b> di channelmu\n"
+            f"2️⃣  Channel otomatis terdaftar\n"
+            f"3️⃣  Konten di-repost real-time ✅\n\n"
+            f"Buka <b>My Channel</b> untuk mulai. 👇",
+            parse_mode=PM,
+        )
+        await answer_cb(cb, "✅ Berhasil! Selamat datang.")
+        # Kirim reply keyboard
+        from pyrogram.types import ReplyKeyboardMarkup, KeyboardButton
+        kb = ReplyKeyboardMarkup([
+            [KeyboardButton("📂 My Channel"), KeyboardButton("📊 Statistik Saya")],
+            [KeyboardButton("🔔 Notifikasi"),  KeyboardButton("ℹ️ Info Bot")],
+            [KeyboardButton("❓ Bantuan")],
+        ], resize_keyboard=True)
+        await client.send_message(cb.message.chat.id, "‎", reply_markup=kb)
+    except Exception as e:
+        log.error(f"[cb_recheck_join] {e}")
+        await answer_cb(cb, "❌ Error, coba lagi.", show_alert=True)
+
+
+# ═══════════════════════════════════════════════════════════
 #  ℹ️ Info Bot
 # ═══════════════════════════════════════════════════════════
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^ℹ️ Info Bot$"))
 async def info_bot(client: Client, message: Message):
-    from utils import nav_to
     total_p  = count_partners()
     active_p = len(get_active_partners())
     total_r  = posts.count_documents({})
@@ -167,7 +210,6 @@ async def info_bot(client: Client, message: Message):
 
 @Client.on_message(filters.text & filters.private & filters.regex(r"^❓ Bantuan$"))
 async def bantuan(client: Client, message: Message):
-    from utils import nav_to
     text = (
         f"❓ <b>Bantuan &amp; Panduan FessBot</b>\n"
         f"<code>{'─' * 28}</code>\n\n"
