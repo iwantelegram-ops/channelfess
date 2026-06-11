@@ -156,6 +156,34 @@ def progress_bar(val: int, total: int, width: int = 10) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+
+
+# ═══════════════════════════════════════════════════════════
+#  SAFE DELETE — khusus delete_messages (return bool, bukan Message)
+# ═══════════════════════════════════════════════════════════
+
+async def safe_delete(client, chat_id, message_ids, retries: int = 5):
+    """Hapus pesan dengan penanganan FloodWait otomatis. Return True jika berhasil."""
+    if isinstance(message_ids, int):
+        message_ids = [message_ids]
+    for attempt in range(retries):
+        try:
+            await client.delete_messages(chat_id, message_ids)
+            return True
+        except FloodWait as e:
+            wait = e.value + 2
+            if wait > FLOOD_SLEEP_THRESHOLD:
+                log.warning(f"[safe_delete] FloodWait {wait}s terlalu lama — lewati")
+                return False
+            log.warning(f"[safe_delete] FloodWait {wait}s (percobaan {attempt+1})")
+            await asyncio.sleep(wait)
+        except MessageIdInvalid:
+            return False  # pesan sudah tidak ada, anggap sukses
+        except Exception as e:
+            log.error(f"[safe_delete] {type(e).__name__}: {e}")
+            return False
+    return False
+
 # ═══════════════════════════════════════════════════════════
 #  BROADCAST HELPER
 # ═══════════════════════════════════════════════════════════
