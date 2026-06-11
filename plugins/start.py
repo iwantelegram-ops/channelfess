@@ -326,18 +326,10 @@ async def cb_bantuan_page(client: Client, cb):
     total  = len(pages)
     page   = max(0, min(page, total - 1))
     markup = _bantuan_markup(page, total)
-
-    # Jika pesan sudah berisi halaman bantuan (bukan pesan info), edit langsung
-    # Jika masih pesan info (tombol Bantuan pertama kali diklik), kirim pesan baru
-    current_text = cb.message.text or ""
-    if current_text.startswith("❓"):
-        try:
-            await cb.message.edit_text(pages[page], reply_markup=markup, parse_mode=PM)
-        except Exception:
-            pass
-    else:
+    try:
+        await cb.message.edit_text(pages[page], reply_markup=markup, parse_mode=PM)
+    except Exception:
         await client.send_message(cb.message.chat.id, pages[page], reply_markup=markup, parse_mode=PM)
-
     await answer_cb(cb)
 
 
