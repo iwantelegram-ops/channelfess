@@ -11,6 +11,8 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("fessbot")
+# Set DEBUG untuk modul repost agar bisa diagnosa delete tracking
+logging.getLogger("fessbot.repost").setLevel(logging.DEBUG)
 
 SESSION_NAME = "fessbot_session"
 
