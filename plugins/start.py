@@ -165,142 +165,72 @@ async def info_bot(client: Client, message: Message):
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 Kunjungi Channel Utama",
                              url=f"https://t.me/{MAIN_CHANNEL_USERNAME}")],
-        [InlineKeyboardButton("❓ Bantuan", callback_data="bantuan_page_0")],
+        [InlineKeyboardButton("📖 Tutorial Penggunaan", callback_data="tutorial")],
     ])
     await message.reply(text, reply_markup=markup, parse_mode=PM)
 
-
 # ═══════════════════════════════════════════════════════════
-#  ❓ Bantuan
+#  📖 Tutorial
 # ═══════════════════════════════════════════════════════════
 
-# ── Halaman bantuan ──────────────────────────────────────────
-def _bantuan_pages(bot_username: str):
-    return [
-        # Halaman 1 — Apa itu FessBot
-        (
-            f"❓ <b>Bantuan FessBot</b>  <code>1/5</code>\n"
-            f"<code>{'─' * 28}</code>\n\n"
-            f"🤖 <b>Apa itu {BOT_NAME}?</b>\n\n"
-            f"{BOT_NAME} adalah bot yang secara otomatis\n"
-            f"meneruskan (<i>repost</i>) foto &amp; video dari\n"
-            f"channel kamu ke <b>channel utama</b>.\n\n"
-            f"Semua konten tampil rapi dengan\n"
-            f"kredit ke channel asalmu. ✨\n\n"
-            f"<code>{'─' * 28}</code>\n"
-            f"<i>Ketuk ▶️ untuk lanjut</i>"
-        ),
-        # Halaman 2 — Cara daftar
-        (
-            f"❓ <b>Bantuan FessBot</b>  <code>2/5</code>\n"
-            f"<code>{'─' * 28}</code>\n\n"
-            f"📡 <b>Cara Daftarkan Channel</b>\n\n"
-            f"1️⃣  Buka <b>pengaturan channel</b> kamu\n"
-            f"2️⃣  Pilih <b>Administrator</b> → <b>Tambah Admin</b>\n"
-            f"3️⃣  Cari <b>@{bot_username}</b>\n"
-            f"4️⃣  Aktifkan izin:\n"
-            f"     ✅ Kirim Pesan\n"
-            f"     ✅ Edit Pesan\n"
-            f"     ✅ Hapus Pesan\n"
-            f"5️⃣  Simpan → channel <b>otomatis terdaftar!</b>\n\n"
-            f"<code>{'─' * 28}</code>\n"
-            f"<i>◀️ Kembali · ▶️ Lanjut</i>"
-        ),
-        # Halaman 3 — Aktifkan & pause
-        (
-            f"❓ <b>Bantuan FessBot</b>  <code>3/5</code>\n"
-            f"<code>{'─' * 28}</code>\n\n"
-            f"▶️ <b>Aktifkan / Pause Repost</b>\n\n"
-            f"• Ketuk <b>📂 My Channel</b> di menu\n"
-            f"• Pilih channel yang ingin dikelola\n"
-            f"• Ketuk <b>▶️ Aktifkan</b> untuk mulai repost\n"
-            f"• Ketuk <b>⏸ Pause</b> untuk hentikan sementara\n\n"
-            f"⚠️ <b>Repost tidak muncul?</b>\n"
-            f"• Cek status channel → harus <b>Aktif</b>\n"
-            f"• Pastikan bot masih jadi <b>Admin</b>\n"
-            f"• Konten harus berupa <b>foto atau video</b>\n"
-            f"• Periksa apakah ada kata terlarang\n\n"
-            f"<code>{'─' * 28}</code>\n"
-            f"<i>◀️ Kembali · ▶️ Lanjut</i>"
-        ),
-        # Halaman 4 — Sinkron hapus
-        (
-            f"❓ <b>Bantuan FessBot</b>  <code>4/5</code>\n"
-            f"<code>{'─' * 28}</code>\n\n"
-            f"🗑 <b>Cara Hapus Repost di Channel Utama</b>\n\n"
-            f"Jika kamu <b>menghapus postingan</b> di\n"
-            f"channel kamu sendiri, bot akan otomatis\n"
-            f"menghapus repost-nya di channel utama.\n\n"
-            f"<b>Syarat agar sinkron bekerja:</b>\n"
-            f"✅ Bot masih jadi Admin di channelmu\n"
-            f"✅ Izin <b>Hapus Pesan</b> aktif di bot\n"
-            f"✅ Fitur <b>Auto-Hapus Repost</b> diaktifkan\n"
-            f"   oleh owner bot\n\n"
-            f"⏱ Penghapusan terdeteksi saat ada\n"
-            f"postingan baru berikutnya dari channelmu.\n\n"
-            f"<code>{'─' * 28}</code>\n"
-            f"<i>◀️ Kembali · ▶️ Lanjut</i>"
-        ),
-        # Halaman 5 — Notifikasi & kontak
-        (
-            f"❓ <b>Bantuan FessBot</b>  <code>5/5</code>\n"
-            f"<code>{'─' * 28}</code>\n\n"
-            f"🔔 <b>Pengaturan Notifikasi</b>\n\n"
-            f"Ketuk <b>🔔 Notifikasi</b> di menu untuk\n"
-            f"atur notif yang kamu terima:\n"
-            f"• ✅ Notif saat repost berhasil\n"
-            f"• ✅ Notif saat repost ditolak (blacklist)\n"
-            f"• ✅ Notif status bot di channelmu\n\n"
-            f"<code>{'─' * 28}</code>\n"
-            f"📬 <b>Butuh bantuan lebih?</b>\n"
-            f"Hubungi owner: @{OWNER_USERNAME or BOT_USERNAME}\n\n"
-            f"<i>Selesai! Ketuk ◀️ untuk kembali ke awal.</i>"
-        ),
-    ]
+TUTORIAL_TEXT = (
+    "📖 <b>Tutorial Penggunaan {bot_name}</b>\n"
+    "<code>{'─' * 28}</code>\n\n"
+
+    "1️⃣ <b>Daftarkan Channel</b>\n"
+    "   • Buka pengaturan channelmu\n"
+    "   • Pilih <b>Administrator → Tambah Admin</b>\n"
+    "   • Cari <b>@{bot_username}</b>\n"
+    "   • Aktifkan izin:\n"
+    "     ✅ Kirim Pesan\n"
+    "     ✅ Edit Pesan\n"
+    "     ✅ Hapus Pesan\n"
+    "   • Simpan → channel <b>otomatis terdaftar</b> ✅\n\n"
+
+    "2️⃣ <b>Aktifkan / Pause Repost</b>\n"
+    "   • Ketuk <b>📂 My Channel</b> di menu\n"
+    "   • Pilih channel → ketuk <b>▶️ Aktifkan</b> atau <b>⏸ Pause</b>\n\n"
+
+    "3️⃣ <b>Hapus Repost di Channel Utama (Sinkron)</b>\n"
+    "   • Hapus postingan di <b>channelmu sendiri</b>\n"
+    "   • Bot otomatis menghapus repost-nya di channel utama\n"
+    "   • <b>Syarat agar sinkron bekerja:</b>\n"
+    "     ✅ Bot masih jadi Admin di channelmu\n"
+    "     ✅ Izin <b>Hapus Pesan</b> aktif\n"
+    "     ✅ Fitur <b>Auto-Hapus Repost</b> diaktifkan owner\n"
+    "   • ⚠️ Penghapusan terdeteksi saat ada postingan baru\n"
+    "     berikutnya dari channelmu\n\n"
+
+    "4️⃣ <b>Notifikasi</b>\n"
+    "   • Ketuk <b>🔔 Notifikasi</b> di menu\n"
+    "   • Atur notif repost, blacklist, dan status channel\n\n"
+
+    "5️⃣ <b>Repost tidak muncul?</b>\n"
+    "   • Cek status channel → harus <b>Aktif ▶️</b>\n"
+    "   • Pastikan bot masih jadi <b>Admin</b>\n"
+    "   • Konten harus berupa <b>foto atau video</b>\n"
+    "   • Periksa apakah ada kata terlarang (blacklist)\n\n"
+
+    "<code>{'─' * 28}</code>\n"
+    "📬 Butuh bantuan? Hubungi @{owner_username}"
+)
 
 
-def _bantuan_markup(page: int, total: int):
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"bantuan_page_{page-1}"))
-    nav.append(InlineKeyboardButton(f"{page+1}/{total}", callback_data="noop_bantuan"))
-    if page < total - 1:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"bantuan_page_{page+1}"))
-    rows = [nav]
-    if page == 1:  # halaman cara daftar — tampilkan tombol add bot
-        rows.append([InlineKeyboardButton(
-            "➕ Tambah Bot ke Channel",
-            url=(f"https://t.me/{BOT_USERNAME}?startchannel=true"
-                 f"&admin=post_messages+edit_messages+delete_messages+invite_users"),
-        )])
-    return InlineKeyboardMarkup(rows)
-
-
-@Client.on_callback_query(filters.regex(r"^bantuan_page_(\d+)$"))
-async def cb_bantuan_page(client: Client, cb: CallbackQuery):
-    log.info(f"[cb_bantuan_page] dipanggil oleh user={cb.from_user.id} page={cb.data}")
+@Client.on_callback_query(filters.regex(r"^tutorial$"))
+async def cb_tutorial(client: Client, cb: CallbackQuery):
     try:
-        page   = int(cb.data.split("_")[-1])
-        pages  = _bantuan_pages(BOT_USERNAME)
-        total  = len(pages)
-        page   = max(0, min(page, total - 1))
-        markup = _bantuan_markup(page, total)
-        try:
-            await cb.message.edit_text(pages[page], reply_markup=markup, parse_mode=PM)
-            log.info("[cb_bantuan_page] edit_text berhasil")
-        except Exception as e:
-            log.warning(f"[cb_bantuan_page] edit_text gagal: {e} — coba send_message")
-            try:
-                await client.send_message(cb.message.chat.id, pages[page], reply_markup=markup, parse_mode=PM)
-                log.info("[cb_bantuan_page] send_message berhasil")
-            except Exception as e2:
-                log.error(f"[cb_bantuan_page] send_message juga gagal: {e2}")
+        text = TUTORIAL_TEXT.format(
+            bot_name=BOT_NAME,
+            bot_username=BOT_USERNAME,
+            owner_username=OWNER_USERNAME or BOT_USERNAME,
+        )
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("➕ Tambah Bot ke Channel",
+                url=(f"https://t.me/{BOT_USERNAME}?startchannel=true"
+                     f"&admin=post_messages+edit_messages+delete_messages+invite_users")),
+        ]])
+        await cb.message.edit_text(text, reply_markup=markup, parse_mode=PM)
     except Exception as e:
-        log.error(f"[cb_bantuan_page] unexpected error: {e}")
+        log.error(f"[cb_tutorial] {e}")
     finally:
-        await answer_cb(cb)
-
-
-@Client.on_callback_query(filters.regex(r"^noop_bantuan$"))
-async def cb_noop_bantuan(client: Client, cb):
-    await answer_cb(cb)
+        await cb.answer()
