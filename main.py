@@ -39,7 +39,8 @@ async def _dummy(_c, _m):
 
 
 async def _on_start():
-    """Dipanggil setelah bot connect ke Telegram. Jalankan scheduler."""    from plugins.repost import start_owner_name_scheduler
+    """Dipanggil setelah bot connect ke Telegram. Jalankan scheduler."""
+    from plugins.repost import start_owner_name_scheduler
     await start_owner_name_scheduler(app)
     log.info("✅ Owner name scheduler started.")
 
