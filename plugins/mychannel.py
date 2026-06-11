@@ -97,8 +97,9 @@ async def _show_channel_list(client, cb_or_msg, user_id: int,
             target_msg = cb_or_msg.message
             res = await safe_edit(target_msg, text, markup=markup, parse_mode=PM)
             if not res:
-                await client.send_message(target_msg.chat.id, text,
-                                          reply_markup=markup, parse_mode=PM)
+                sent = await client.send_message(target_msg.chat.id, text,
+                                                 reply_markup=markup, parse_mode=PM)
+                store_msg(user_id, sent)
         else:
             msg = await nav_to(client, user_id, cb_or_msg.chat.id, text,
                                inline_markup=markup, parse_mode=PM)

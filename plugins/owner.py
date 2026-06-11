@@ -352,6 +352,19 @@ async def kb_top_channel(client: Client, message: Message):
 #  DETAIL CHANNEL (owner view)
 # ═══════════════════════════════════════════════════════════
 
+def _partner_detail_inline_markup(partner: dict, channel_id: int) -> InlineKeyboardMarkup:
+    """Markup inline untuk tampilan detail channel dari callback."""
+    paused = partner.get("paused", False)
+    if paused:
+        toggle = InlineKeyboardButton("▶️ Aktifkan",  callback_data=f"owner_run_{channel_id}")
+    else:
+        toggle = InlineKeyboardButton("⏸ Pause",      callback_data=f"owner_pause_{channel_id}")
+    return InlineKeyboardMarkup([
+        [toggle],
+        [InlineKeyboardButton("◀️ Kembali ke Daftar", callback_data="list_partner_0")],
+    ])
+
+
 def _partner_detail_text(partner: dict, channel_id: int) -> str:
     paused   = partner.get("paused", False)
     status   = "▶️ Aktif" if not paused else "⏸ Dijeda"
@@ -382,13 +395,13 @@ def _partner_detail_text(partner: dict, channel_id: int) -> str:
 async def _show_partner_detail(client, source, channel_id: int):
     """
     source bisa Message atau CallbackQuery.
-    Kalau CallbackQuery: edit inline message, update reply kb via send_message.
-    Kalau Message: nav_to + send reply kb.
+    CallbackQuery: edit teks + ganti inline markup (back/pause/run).
+    Message: nav_to + kirim reply keyboard.
     """
     partner = get_partner(channel_id)
     if not partner:
         if hasattr(source, "answer"):
-            await source.answer("Channel tidak ditemukan.", show_alert=True)
+            await answer_cb(source, "Channel tidak ditemukan.", True)
         else:
             await source.reply("❌ Channel tidak ditemukan.")
         return
@@ -396,15 +409,14 @@ async def _show_partner_detail(client, source, channel_id: int):
     uid = getattr(getattr(source, "from_user", None), "id", OWNER_ID)
     _viewing_channel[uid] = channel_id
 
-    paused = partner.get("paused", False)
-    text   = _partner_detail_text(partner, channel_id)
-    kb     = kb_detail_channel(paused)
+    text = _partner_detail_text(partner, channel_id)
 
-    if hasattr(source, "message"):  # CallbackQuery
-        await safe_edit(source.message, text, parse_mode=PM)
-        await client.send_message(source.message.chat.id, "‎", reply_markup=kb)
-    else:  # Message
-        await _show(client, source, text, reply_kb=kb)
+    if hasattr(source, "message"):  # CallbackQuery — gunakan INLINE keyboard saja
+        markup = _partner_detail_inline_markup(partner, channel_id)
+        await safe_edit(source.message, text, markup=markup, parse_mode=PM)
+    else:  # Message — gunakan reply keyboard
+        paused = partner.get("paused", False)
+        await _show(client, source, text, reply_kb=kb_detail_channel(paused))
 
 
 @Client.on_callback_query(filters.regex(r"^owner_ch_(-?\d+)$"))
@@ -415,6 +427,72 @@ async def cb_owner_ch_detail(client: Client, cb: CallbackQuery):
         await _show_partner_detail(client, cb, channel_id)
     except Exception as e:
         log.error(f"[cb_owner_ch_detail] {e}")
+    finally:
+        await answer_cb(cb)
+
+
+# ─── Inline action: pause / run dari detail view (callback) ─
+
+@Client.on_callback_query(filters.regex(r"^owner_pause_(-?\d+)$"))
+@owner_only
+async def cb_owner_pause_inline(client: Client, cb: CallbackQuery):
+    try:
+        channel_id = int(cb.matches[0].group(1))
+        partner    = get_partner(channel_id)
+        if not partner:
+            await answer_cb(cb, "Channel tidak ditemukan.", True)
+            return
+        upsert_partner(channel_id, {"paused": True, "reason": "Dijeda oleh admin"})
+        await answer_cb(cb, "⏸ Channel dijeda.")
+        oid = partner.get("owner_id")
+        if oid:
+            try:
+                await client.send_message(
+                    oid,
+                    f"⏸ <b>Channel dijeda oleh admin.</b>\n\n"
+                    f"📡 <b>{partner.get('channel_name', '')}</b>",
+                    parse_mode=PM,
+                )
+            except Exception:
+                pass
+        partner_fresh = get_partner(channel_id)
+        markup = _partner_detail_inline_markup(partner_fresh, channel_id)
+        text   = _partner_detail_text(partner_fresh, channel_id)
+        await safe_edit(cb.message, text, markup=markup, parse_mode=PM)
+    except Exception as e:
+        log.error(f"[cb_owner_pause_inline] {e}")
+    finally:
+        await answer_cb(cb)
+
+
+@Client.on_callback_query(filters.regex(r"^owner_run_(-?\d+)$"))
+@owner_only
+async def cb_owner_run_inline(client: Client, cb: CallbackQuery):
+    try:
+        channel_id = int(cb.matches[0].group(1))
+        partner    = get_partner(channel_id)
+        if not partner:
+            await answer_cb(cb, "Channel tidak ditemukan.", True)
+            return
+        upsert_partner(channel_id, {"paused": False, "reason": ""})
+        await answer_cb(cb, "▶️ Channel aktif!")
+        oid = partner.get("owner_id")
+        if oid:
+            try:
+                await client.send_message(
+                    oid,
+                    f"▶️ <b>Channel aktif kembali!</b>\n\n"
+                    f"📡 <b>{partner.get('channel_name', '')}</b> 🚀",
+                    parse_mode=PM,
+                )
+            except Exception:
+                pass
+        partner_fresh = get_partner(channel_id)
+        markup = _partner_detail_inline_markup(partner_fresh, channel_id)
+        text   = _partner_detail_text(partner_fresh, channel_id)
+        await safe_edit(cb.message, text, markup=markup, parse_mode=PM)
+    except Exception as e:
+        log.error(f"[cb_owner_run_inline] {e}")
     finally:
         await answer_cb(cb)
 

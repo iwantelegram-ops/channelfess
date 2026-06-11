@@ -25,7 +25,7 @@ from db.helpers import (
     increment_partner_posts, contains_blacklisted, count_posts_by_partner,
     get_notif_setting, log_activity,
 )
-from utils import safe_send
+from utils import safe_send, answer_cb
 
 log = logging.getLogger("fessbot.repost")
 PM  = ParseMode.MARKDOWN
@@ -132,42 +132,70 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
 
 @Client.on_callback_query(filters.regex(r"^confirm_sync_(-?\d+)$"))
 async def cb_confirm_sync(client: Client, cb):
-    channel_id = int(cb.matches[0].group(1))
-    partner    = get_partner(channel_id)
+    answered = False
+    try:
+        channel_id = int(cb.matches[0].group(1))
+        partner    = get_partner(channel_id)
 
-    if not partner or partner.get("owner_id") != cb.from_user.id:
-        await cb.answer("Channel tidak ditemukan.", show_alert=True)
-        return
+        if not partner or partner.get("owner_id") != cb.from_user.id:
+            await answer_cb(cb, "Channel tidak ditemukan.", True)
+            answered = True
+            return
 
-    upsert_partner(channel_id, {"paused": False, "reason": ""})
-    log_activity("partner_activated", channel_id)
+        upsert_partner(channel_id, {"paused": False, "reason": ""})
+        log_activity("partner_activated", channel_id)
 
-    await safe_send(cb.message.edit_text(
-        f"▶️ **Sinkronisasi aktif!**\n\n"
-        f"📡 **{partner.get('channel_name', channel_id)}** kini meneruskan "
-        f"postingan ke channel utama. 🚀\n\n"
-        f"Buka **My Channel** untuk kelola kapan saja.",
-    ))
-    await cb.answer("Aktif!", show_alert=False)
+        try:
+            await cb.message.edit_text(
+                f"▶️ **Sinkronisasi aktif!**\n\n"
+                f"📡 **{partner.get('channel_name', channel_id)}** kini meneruskan "
+                f"postingan ke channel utama. 🚀\n\n"
+                f"Buka **My Channel** untuk kelola kapan saja.",
+                reply_markup=InlineKeyboardMarkup([]),
+            )
+        except Exception:
+            pass
+
+        await answer_cb(cb, "Aktif!")
+        answered = True
+    except Exception as e:
+        log.error(f"[cb_confirm_sync] {e}")
+    finally:
+        if not answered:
+            await answer_cb(cb)
 
 
 @Client.on_callback_query(filters.regex(r"^confirm_nosync_(-?\d+)$"))
 async def cb_confirm_nosync(client: Client, cb):
-    channel_id = int(cb.matches[0].group(1))
-    partner    = get_partner(channel_id)
+    answered = False
+    try:
+        channel_id = int(cb.matches[0].group(1))
+        partner    = get_partner(channel_id)
 
-    if not partner or partner.get("owner_id") != cb.from_user.id:
-        await cb.answer("Channel tidak ditemukan.", show_alert=True)
-        return
+        if not partner or partner.get("owner_id") != cb.from_user.id:
+            await answer_cb(cb, "Channel tidak ditemukan.", True)
+            answered = True
+            return
 
-    upsert_partner(channel_id, {"paused": True, "reason": "Tidak diaktifkan oleh owner"})
+        upsert_partner(channel_id, {"paused": True, "reason": "Tidak diaktifkan oleh owner"})
 
-    await safe_send(cb.message.edit_text(
-        f"⏸ **Oke, disimpan dulu.**\n\n"
-        f"📡 **{partner.get('channel_name', channel_id)}** terdaftar tapi belum aktif.\n"
-        f"Aktifkan lewat **My Channel** kapan saja.",
-    ))
-    await cb.answer("Bisa diaktifkan nanti.", show_alert=False)
+        try:
+            await cb.message.edit_text(
+                f"⏸ **Oke, disimpan dulu.**\n\n"
+                f"📡 **{partner.get('channel_name', channel_id)}** terdaftar tapi belum aktif.\n"
+                f"Aktifkan lewat **My Channel** kapan saja.",
+                reply_markup=InlineKeyboardMarkup([]),
+            )
+        except Exception:
+            pass
+
+        await answer_cb(cb, "Bisa diaktifkan nanti.")
+        answered = True
+    except Exception as e:
+        log.error(f"[cb_confirm_nosync] {e}")
+    finally:
+        if not answered:
+            await answer_cb(cb)
 
 
 # ═══════════════════════════════════════════════════════════

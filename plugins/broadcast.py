@@ -269,6 +269,7 @@ async def cb_bc_confirm(client: Client, cb: CallbackQuery):
             f"📤 <b>Mengirim broadcast…</b>\n\n"
             f"Target: <code>{len(targets)}</code> {target_label.lower()}\n"
             f"<i>Harap tunggu…</i>",
+            markup=InlineKeyboardMarkup([]),
             parse_mode=PM,
         )
         await answer_cb(cb, "Mengirim…")
@@ -287,6 +288,7 @@ async def cb_bc_confirm(client: Client, cb: CallbackQuery):
             f"Berhasil   <code>{success}</code> ✅\n"
             f"Gagal      <code>{fail}</code> ❌\n"
             f"Total      <code>{success+fail}</code>",
+            markup=InlineKeyboardMarkup([]),
             parse_mode=PM,
         )
     except Exception as e:
@@ -313,6 +315,7 @@ async def cb_bc_edit(client: Client, cb: CallbackQuery):
         await safe_edit(
             cb.message,
             "✏️ <b>Edit Pesan Broadcast</b>\n\nKetik pesan baru kamu:",
+            markup=InlineKeyboardMarkup([]),
             parse_mode=PM,
         )
         await answer_cb(cb, "Ketik pesan baru.")
@@ -330,7 +333,8 @@ async def cb_bc_cancel(client: Client, cb: CallbackQuery):
     answered = False
     try:
         _bc_state.pop(cb.from_user.id, None)
-        await safe_edit(cb.message, "❌ <b>Broadcast dibatalkan.</b>", parse_mode=PM)
+        await safe_edit(cb.message, "❌ <b>Broadcast dibatalkan.</b>",
+                        markup=InlineKeyboardMarkup([]), parse_mode=PM)
         await answer_cb(cb, "Dibatalkan.")
         answered = True
     except Exception as e:
