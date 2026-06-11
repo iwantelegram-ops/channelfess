@@ -25,7 +25,7 @@ from db.helpers import (
     increment_partner_posts, contains_blacklisted, count_posts_by_partner,
     get_notif_setting, log_activity,
 )
-from utils import safe_send, answer_cb
+from utils import safe_send, safe_delete, answer_cb
 
 log = logging.getLogger("fessbot.repost")
 PM  = ParseMode.MARKDOWN
@@ -363,15 +363,29 @@ async def repost(client: Client, message: Message):
 
 @Client.on_deleted_messages(filters.channel)
 async def delete_repost(client: Client, messages):
+    # Pyrogram DeletedMessages: msg.chat bisa None di beberapa versi.
+    # Strategi: cari channel_id dari chat attribute, atau fallback ke
+    # query MongoDB berdasarkan msg.id saja (cari semua partner yang punya post itu).
     for msg in messages:
+        msg_id = msg.id
+
+        # Coba dapat channel_id dari msg.chat
         channel_id = getattr(getattr(msg, "chat", None), "id", None)
-        if not channel_id:
-            continue
-        post = get_post(channel_id, msg.id)
-        if post:
-            result = await safe_send(
-                client.delete_messages(MAIN_CHANNEL_ID, post["main_msg_id"])
-            )
-            if result is not None:
-                log_activity("repost_deleted", channel_id, {"main_msg_id": post["main_msg_id"]})
-            delete_post(channel_id, msg.id)
+
+        if channel_id:
+            # Jalur normal: channel_id diketahui
+            post = get_post(channel_id, msg_id)
+            if post:
+                ok = await safe_delete(client, MAIN_CHANNEL_ID, post["main_msg_id"])
+                if ok:
+                    log_activity("repost_deleted", channel_id, {"main_msg_id": post["main_msg_id"]})
+                delete_post(channel_id, msg_id)
+        else:
+            # Fallback: channel_id tidak diketahui — cari di semua post dengan msg_id ini
+            from db.helpers import get_posts_by_msg_id
+            matched = get_posts_by_msg_id(msg_id)
+            for post in matched:
+                ok = await safe_delete(client, MAIN_CHANNEL_ID, post["main_msg_id"])
+                if ok:
+                    log_activity("repost_deleted", post["partner_id"], {"main_msg_id": post["main_msg_id"]})
+                delete_post(post["partner_id"], msg_id)
