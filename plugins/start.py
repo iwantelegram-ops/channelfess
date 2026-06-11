@@ -165,15 +165,16 @@ async def info_bot(client: Client, message: Message):
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 Kunjungi Channel Utama",
                              url=f"https://t.me/{MAIN_CHANNEL_USERNAME}")],
-        [InlineKeyboardButton("📖 Tutorial Penggunaan", callback_data="tutorial")],
+        [InlineKeyboardButton("📖 Tutorial Penggunaan", callback_data="user_tutorial")],
     ])
     await message.reply(text, reply_markup=markup, parse_mode=PM)
+
 
 # ═══════════════════════════════════════════════════════════
 #  📖 Tutorial
 # ═══════════════════════════════════════════════════════════
 
-@Client.on_callback_query(filters.regex(r"^tutorial$"))
+@Client.on_callback_query(filters.regex(r"^user_tutorial$"))
 async def cb_tutorial(client: Client, cb: CallbackQuery):
     SEP = "─" * 28
     text = (
@@ -213,18 +214,23 @@ async def cb_tutorial(client: Client, cb: CallbackQuery):
                  f"&admin=post_messages+edit_messages+delete_messages+invite_users"),
         )
     ]])
+    
+    answered = False
     try:
-        # Coba edit dulu; kalau gagal kirim pesan baru
+        # Coba edit pesan terlebih dahulu
         res = await safe_edit(cb.message, text, markup=markup, parse_mode=PM)
         if res is None:
             await client.send_message(cb.message.chat.id, text,
                                       reply_markup=markup, parse_mode=PM)
+        await answer_cb(cb, "Memuat tutorial...")
+        answered = True
     except Exception as e:
-        log.error(f"[cb_tutorial] {e}")
+        log.error(f"[cb_tutorial] Gagal menampilkan tutorial: {e}")
         try:
             await client.send_message(cb.message.chat.id, text,
                                       reply_markup=markup, parse_mode=PM)
         except Exception as e2:
-            log.error(f"[cb_tutorial] send_message juga gagal: {e2}")
+            log.error(f"[cb_tutorial] send_message darurat juga gagal: {e2}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
