@@ -13,7 +13,7 @@ logging.basicConfig(
 log = logging.getLogger("fessbot")
 logging.getLogger("fessbot.repost").setLevel(logging.DEBUG)
 
-SESSION_NAME = "fessbot_session"
+SESSION_NAME = "fessbot_session_baru"
 
 app = Client(
     SESSION_NAME,
