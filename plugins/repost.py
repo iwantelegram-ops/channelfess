@@ -35,15 +35,15 @@ PM  = ParseMode.MARKDOWN
 #  CAPTION BUILDER — JANGAN DIUBAH (sesuai permintaan owner)
 # ═══════════════════════════════════════════════════════════
 
-def build_caption(original_caption, channel_title, channel_username,
+def build_caption(original_caption, channel_title, invite_link,
                   owner_name, owner_id, post_number, bot_name, bot_username):
     now  = datetime.now(timezone.utc)
     date = now.strftime("%d %b %Y")
     time = now.strftime("%H:%M UTC")
 
-    # Channel asal — clickable link ke channel
-    if channel_username:
-        ch_link = f"[{channel_title}](https://t.me/{channel_username})"
+    # Channel asal — clickable via invite_link (t.me/+ atau t.me/username)
+    if invite_link:
+        ch_link = f"[{channel_title}]({invite_link})"
     else:
         ch_link = f"**{channel_title}**"
 
@@ -68,6 +68,31 @@ def build_caption(original_caption, channel_title, channel_username,
 
 
 # ═══════════════════════════════════════════════════════════
+#  HELPER — INVITE LINK
+# ═══════════════════════════════════════════════════════════
+
+async def _get_or_create_invite_link(client: Client, channel_id: int) -> str:
+    """
+    Ambil invite_link dari DB jika sudah ada.
+    Kalau belum, minta Telegram generate invite link permanen lalu simpan ke DB.
+    Fallback ke string kosong jika bot tidak punya izin.
+    """
+    partner = get_partner(channel_id)
+    if partner and partner.get("invite_link"):
+        return partner["invite_link"]
+
+    try:
+        link = await client.export_chat_invite_link(channel_id)
+        if link:
+            upsert_partner(channel_id, {"invite_link": link})
+            log.info(f"[invite_link] Generated untuk {channel_id}: {link}")
+            return link
+    except Exception as e:
+        log.warning(f"[invite_link] Gagal generate untuk {channel_id}: {e}")
+    return ""
+
+
+# ═══════════════════════════════════════════════════════════
 #  DETEKSI BOT JADI ADMIN
 # ═══════════════════════════════════════════════════════════
 
@@ -87,11 +112,15 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
             owner_id   = inviter.id   if inviter else 0
             owner_name = inviter.first_name if inviter else "Unknown"
 
+            # Generate invite link untuk caption clickable
+            invite_link = await _get_or_create_invite_link(client, channel_id)
+
             upsert_partner(channel_id, {
                 "owner_id":     owner_id,
                 "owner_name":   owner_name,
                 "channel_name": update.chat.title,
                 "username":     update.chat.username or "",
+                "invite_link":  invite_link,
                 "paused":       True,
                 "reason":       "Menunggu konfirmasi owner",
                 "added_at":     datetime.now(timezone.utc),
@@ -259,11 +288,15 @@ async def cmd_daftarkan(client: Client, message: Message):
         await message.reply("❌ Tidak bisa verifikasi status kamu di channel.")
         return
 
+    # Generate invite link untuk caption clickable
+    invite_link = await _get_or_create_invite_link(client, channel_id)
+
     upsert_partner(channel_id, {
         "owner_id":     user_id,
         "owner_name":   message.from_user.first_name or "Unknown",
         "channel_name": chat.title,
         "username":     chat.username or "",
+        "invite_link":  invite_link,
         "paused":       True,
         "reason":       "Menunggu konfirmasi owner",
         "added_at":     datetime.now(timezone.utc),
@@ -320,13 +353,18 @@ async def repost(client: Client, message: Message):
 
     # Ambil info bot dari sistem (bukan dari env)
     me = await client.get_me()
-    bot_name_real = me.first_name or me.username or "Bot"
+    bot_name_real  = me.first_name or me.username or "Bot"
     bot_uname_real = me.username or ""
+
+    # Ambil invite_link dari DB; kalau belum ada, generate sekarang
+    invite_link = partner.get("invite_link", "")
+    if not invite_link:
+        invite_link = await _get_or_create_invite_link(client, channel_id)
 
     cap = build_caption(
         original_caption = caption_text,
         channel_title    = partner.get("channel_name", message.chat.title),
-        channel_username = partner.get("username", ""),
+        invite_link      = invite_link,
         owner_name       = partner.get("owner_name", "Unknown"),
         owner_id         = partner.get("owner_id", 0),
         post_number      = post_number,
