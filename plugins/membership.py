@@ -24,7 +24,7 @@ PM  = ParseMode.HTML
 # ═══════════════════════════════════════════════════════════
 
 CHANNEL_WELCOME_TEXT = (
-    "Hai selamat bergabung 👋, postingan di channel kamu juga bisa "
+    "✅ Hai selamat bergabung 👋, postingan di channel kamu juga bisa "
     "tampil di sini loh, klik tombol di bawah untuk tutorial."
 )
 CHANNEL_WELCOME_TTL = 60   # detik — durasi pesan welcome sebelum dihapus
