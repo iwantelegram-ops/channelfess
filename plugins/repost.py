@@ -12,7 +12,7 @@ Auto-repost dari channel partner ke channel utama.
 import asyncio
 import logging
 from datetime import datetime, timezone
-from pyrogram import Client, filters
+from pyrogram import Client, filters, raw
 from pyrogram.types import (
     Message, ChatMemberUpdated,
     InlineKeyboardMarkup, InlineKeyboardButton,
@@ -361,31 +361,34 @@ async def repost(client: Client, message: Message):
 #  HAPUS REPOST JIKA POST ASLI DIHAPUS
 # ═══════════════════════════════════════════════════════════
 
-@Client.on_deleted_messages(filters.channel)
-async def delete_repost(client: Client, messages):
-    # Pyrogram DeletedMessages: msg.chat bisa None di beberapa versi.
-    # Strategi: cari channel_id dari chat attribute, atau fallback ke
-    # query MongoDB berdasarkan msg.id saja (cari semua partner yang punya post itu).
-    for msg in messages:
-        msg_id = msg.id
+@Client.on_raw_update()
+async def delete_repost(client: Client, update, users, chats):
+    """
+    Tangkap UpdateDeleteChannelMessages langsung dari raw MTProto.
+    channel_id di raw update = integer positif (tanpa -100 prefix).
+    Pyrogram menyimpan channel sebagai -100xxxxxxxxx.
+    """
+    if not isinstance(update, raw.types.UpdateDeleteChannelMessages):
+        return
 
-        # Coba dapat channel_id dari msg.chat
-        channel_id = getattr(getattr(msg, "chat", None), "id", None)
+    # Raw MTProto channel_id positif → konversi ke format Pyrogram
+    raw_channel_id = update.channel_id
+    channel_id     = int(f"-100{raw_channel_id}")
 
-        if channel_id:
-            # Jalur normal: channel_id diketahui
-            post = get_post(channel_id, msg_id)
-            if post:
-                ok = await safe_delete(client, MAIN_CHANNEL_ID, post["main_msg_id"])
-                if ok:
-                    log_activity("repost_deleted", channel_id, {"main_msg_id": post["main_msg_id"]})
-                delete_post(channel_id, msg_id)
+    log.debug(f"[delete_repost] raw_channel_id={raw_channel_id} "
+              f"→ channel_id={channel_id}, msg_ids={update.messages}")
+
+    # Cek di database: ada tidak post dari channel ini?
+    for msg_id in update.messages:
+        post = get_post(channel_id, msg_id)
+        log.debug(f"[delete_repost] get_post({channel_id}, {msg_id}) = {post}")
+        if not post:
+            continue
+        ok = await safe_delete(client, MAIN_CHANNEL_ID, post["main_msg_id"])
+        if ok:
+            log.info(f"[delete_repost] ✅ Hapus repost main_msg_id={post['main_msg_id']} "
+                     f"(partner={channel_id} msg={msg_id})")
+            log_activity("repost_deleted", channel_id, {"main_msg_id": post["main_msg_id"]})
         else:
-            # Fallback: channel_id tidak diketahui — cari di semua post dengan msg_id ini
-            from db.helpers import get_posts_by_msg_id
-            matched = get_posts_by_msg_id(msg_id)
-            for post in matched:
-                ok = await safe_delete(client, MAIN_CHANNEL_ID, post["main_msg_id"])
-                if ok:
-                    log_activity("repost_deleted", post["partner_id"], {"main_msg_id": post["main_msg_id"]})
-                delete_post(post["partner_id"], msg_id)
+            log.warning(f"[delete_repost] ❌ Gagal hapus main_msg_id={post['main_msg_id']}")
+        delete_post(channel_id, msg_id)
