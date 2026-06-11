@@ -68,6 +68,10 @@ def get_post(partner_id: int, partner_msg_id: int):
 def delete_post(partner_id: int, partner_msg_id: int):
     posts.delete_one({"_id": _post_id(partner_id, partner_msg_id)})
 
+def get_posts_by_msg_id(partner_msg_id: int) -> list:
+    """Fallback: cari semua post dengan partner_msg_id tertentu (tanpa tahu partner_id)."""
+    return list(posts.find({"partner_msg_id": partner_msg_id}))
+
 def count_posts_by_partner(partner_id: int) -> int:
     return posts.count_documents({"partner_id": partner_id})
 
