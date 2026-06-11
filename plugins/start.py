@@ -316,7 +316,7 @@ async def bantuan(client: Client, message: Message):
     pages  = _bantuan_pages(BOT_USERNAME)
     text   = pages[0]
     markup = _bantuan_markup(0, len(pages))
-    await message.reply(text, reply_markup=markup, parse_mode=PM)
+    await client.send_message(message.chat.id, text, reply_markup=markup, parse_mode=PM)
 
 
 @Client.on_callback_query(filters.regex(r"^bantuan_page_(\d+)$"))
@@ -329,9 +329,9 @@ async def cb_bantuan_page(client: Client, cb):
     try:
         await cb.message.edit_text(pages[page], reply_markup=markup, parse_mode=PM)
     except Exception:
-        # edit gagal (reply message / sudah dihapus) → kirim pesan baru
-        await cb.message.reply(pages[page], reply_markup=markup, parse_mode=PM)
+        pass
     await answer_cb(cb)
+
 
 @Client.on_callback_query(filters.regex(r"^noop_bantuan$"))
 async def cb_noop_bantuan(client: Client, cb):
