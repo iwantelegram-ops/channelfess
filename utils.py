@@ -41,30 +41,23 @@ def paginate(data: list, page: int, page_size: int = 8):
 # ═══════════════════════════════════════════════════════════
 
 async def safe_send(coro, retries: int = 5):
-    """
-    Jalankan coroutine dengan penanganan FloodWait otomatis.
-
-    FIX: Coroutine Pyrogram tidak bisa di-reuse (RuntimeError setelah
-    await pertama gagal). Karena itu retry hanya dilakukan untuk
-    FloodWait — dan coro hanya di-await sekali. Jika kena FloodWait,
-    tunggu lalu kembalikan None (caller harus retry dari awal jika perlu).
-    Untuk kasus repost biasa, satu attempt sudah cukup.
-    """
-    try:
-        return await coro
-    except FloodWait as e:
-        wait = e.value + 2
-        if wait > FLOOD_SLEEP_THRESHOLD:
-            log.warning(f"[FloodWait] {wait}s — lewati")
+    """Jalankan coroutine dengan penanganan FloodWait otomatis."""
+    for attempt in range(retries):
+        try:
+            return await coro
+        except FloodWait as e:
+            wait = e.value + 2
+            if wait > FLOOD_SLEEP_THRESHOLD:
+                log.warning(f"[FloodWait] {wait}s — lewati")
+                return None
+            log.warning(f"[FloodWait] Tunggu {wait}s (percobaan {attempt+1})")
+            await asyncio.sleep(wait)
+        except (MessageNotModified, MessageIdInvalid):
             return None
-        log.warning(f"[FloodWait] Tunggu {wait}s lalu batal (coroutine tidak bisa di-retry)")
-        await asyncio.sleep(wait)
-        return None
-    except (MessageNotModified, MessageIdInvalid):
-        return None
-    except Exception as e:
-        log.error(f"[safe_send] {type(e).__name__}: {e}")
-        return None
+        except Exception as e:
+            log.error(f"[safe_send] {type(e).__name__}: {e}")
+            return None
+    return None
 
 
 # ═══════════════════════════════════════════════════════════
@@ -163,17 +156,14 @@ def progress_bar(val: int, total: int, width: int = 10) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
+
+
 # ═══════════════════════════════════════════════════════════
 #  SAFE DELETE — khusus delete_messages (return bool, bukan Message)
 # ═══════════════════════════════════════════════════════════
 
-async def safe_delete(client, chat_id, message_ids, retries: int = 3):
-    """
-    Hapus pesan dengan penanganan FloodWait otomatis. Return True jika berhasil.
-
-    FIX: kurangi retries default dari 5 ke 3 untuk hemat waktu;
-    delete_messages tidak perlu banyak retry karena bukan idempotent risk.
-    """
+async def safe_delete(client, chat_id, message_ids, retries: int = 5):
+    """Hapus pesan dengan penanganan FloodWait otomatis. Return True jika berhasil."""
     if isinstance(message_ids, int):
         message_ids = [message_ids]
     for attempt in range(retries):
@@ -188,12 +178,11 @@ async def safe_delete(client, chat_id, message_ids, retries: int = 3):
             log.warning(f"[safe_delete] FloodWait {wait}s (percobaan {attempt+1})")
             await asyncio.sleep(wait)
         except MessageIdInvalid:
-            return True  # FIX: pesan sudah tidak ada = sukses (sudah dihapus)
+            return False  # pesan sudah tidak ada, anggap sukses
         except Exception as e:
             log.error(f"[safe_delete] {type(e).__name__}: {e}")
             return False
     return False
-
 
 # ═══════════════════════════════════════════════════════════
 #  BROADCAST HELPER

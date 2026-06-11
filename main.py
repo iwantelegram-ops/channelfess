@@ -11,6 +11,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("fessbot")
+# Set DEBUG untuk modul repost agar bisa diagnosa delete tracking
 logging.getLogger("fessbot.repost").setLevel(logging.DEBUG)
 
 SESSION_NAME = "fessbot_session"
@@ -23,31 +24,15 @@ app = Client(
     plugins  = dict(root="plugins"),
 )
 
+# Ganti FileStorage bawaan Pyrogram dengan MongoStorage
+# sebelum app.run() agar sesi disimpan di MongoDB, bukan file .session
 app.storage = MongoStorage(
     name               = SESSION_NAME,
     collection_session = sessions_col,
     collection_peers   = peers_col,
 )
 
-
-async def main():
-    await app.start()
-    log.info("🤖 FessBot v2 started.")
-
-    # Jalankan scheduler setelah bot connect
-    try:
-        from plugins.repost import start_owner_name_scheduler
-        await start_owner_name_scheduler(app)
-    except Exception as e:
-        log.warning(f"Scheduler start failed: {e}")
-
-    await asyncio.Event().wait()  # block selamanya sampai Ctrl+C
-
-
 if __name__ == "__main__":
     log.info("🤖 FessBot v2 starting...")
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    app.run()
     log.info("🤖 FessBot v2 stopped.")
