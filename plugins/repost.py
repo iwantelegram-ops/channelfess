@@ -42,7 +42,7 @@ def build_caption(original_caption, channel_title, channel_username,
     time = now.strftime("%H:%M UTC")
 
     if channel_username:
-        ch_link = f"[{channel_title}](https://t.me/{channel_username})"
+        ch_link = f"**{channel_title}** (@{channel_username})"
     else:
         ch_link = f"**{channel_title}**"
 
@@ -55,7 +55,7 @@ def build_caption(original_caption, channel_title, channel_username,
         f"📅  Tanggal :  {date}\n"
         f"🕒  Jam     :  {time}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔁  via [@{bot_username}](https://t.me/{bot_username}?start=start)"
+        f"🔁  via @{bot_username}"
     )
     return cap.strip()
 
@@ -269,10 +269,7 @@ async def cmd_daftarkan(client: Client, message: Message):
 #  REPOST — foto, video, dokumen, audio, teks
 # ═══════════════════════════════════════════════════════════
 
-MEDIA_FILTER = (
-    filters.photo | filters.video | filters.document
-    | filters.audio | filters.text
-)
+MEDIA_FILTER = (filters.photo | filters.video)
 
 
 @Client.on_message(filters.channel & MEDIA_FILTER)
@@ -314,6 +311,10 @@ async def repost(client: Client, message: Message):
         bot_username     = BOT_USERNAME,
     )
 
+    # Hanya proses foto atau video (dengan atau tanpa caption)
+    if not (message.photo or message.video):
+        return
+
     uname = partner.get("username", "")
     if uname:
         original_url = f"https://t.me/{uname}/{message.id}"
@@ -325,15 +326,9 @@ async def repost(client: Client, message: Message):
         InlineKeyboardButton("🔗 Lihat Post Asli", url=original_url)
     ]])
 
-    # Text-only post → copy as text
-    if message.text and not (message.photo or message.video or message.document or message.audio):
-        sent = await safe_send(
-            client.send_message(MAIN_CHANNEL_ID, cap, reply_markup=btn, parse_mode=PM)
-        )
-    else:
-        sent = await safe_send(
-            message.copy(MAIN_CHANNEL_ID, caption=cap, reply_markup=btn, parse_mode=PM)
-        )
+    sent = await safe_send(
+        message.copy(MAIN_CHANNEL_ID, caption=cap, reply_markup=btn, parse_mode=PM)
+    )
 
     if sent:
         save_post(channel_id, message.id, sent.id)
