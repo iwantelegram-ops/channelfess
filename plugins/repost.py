@@ -159,7 +159,7 @@ async def cb_confirm_sync(client: Client, cb):
                 f"📡 **{partner.get('channel_name', channel_id)}** kini meneruskan "
                 f"postingan ke channel utama secara real-time. 🚀\n\n"
                 f"Buka **My Channel** untuk kelola kapan saja.",
-                reply_markup=InlineKeyboardMarkup([]),
+                reply_markup=None,
             )
         except Exception:
             pass
@@ -192,7 +192,7 @@ async def cb_confirm_nosync(client: Client, cb):
                 f"⏸ **Tidak diaktifkan.**\n\n"
                 f"📡 **{partner.get('channel_name', channel_id)}** terdaftar tapi belum aktif.\n"
                 f"Anda bisa mengubahnya kapan saja di **My Channel**.",
-                reply_markup=InlineKeyboardMarkup([]),
+                reply_markup=None,
             )
         except Exception:
             pass
