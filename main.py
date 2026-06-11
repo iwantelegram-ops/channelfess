@@ -4,7 +4,6 @@ from pyrogram import Client
 from config import API_ID, API_HASH, BOT_TOKEN
 from db.mongo import sessions_col, peers_col
 from db.mongo_storage import MongoStorage
-from plugins.repost import start_owner_name_scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,11 +34,5 @@ app.storage = MongoStorage(
 
 if __name__ == "__main__":
     log.info("🤖 FessBot v2 starting...")
-
-    async def _main():
-        async with app:
-            await start_owner_name_scheduler(app)
-            await asyncio.Event().wait()  # tunggu selamanya
-
-    asyncio.run(_main())
+    app.run()
     log.info("🤖 FessBot v2 stopped.")
