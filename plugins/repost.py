@@ -18,7 +18,7 @@ from pyrogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
 from pyrogram.enums import ChatMemberStatus, ChatType, ParseMode
-from pyrogram.errors import FloodWait, ChatWriteForbidden, PeerIdInvalid
+from pyrogram.errors import FloodWait, ChatWriteForbidden, PeerIdInvalid, MessageIdInvalid
 from config import MAIN_CHANNEL_ID, BOT_USERNAME
 from db.helpers import (
     get_partner, upsert_partner, save_post, get_post, delete_post,
@@ -92,6 +92,14 @@ async def on_bot_admin_change(client: Client, update: ChatMemberUpdated):
             })
             log_activity("partner_added", channel_id, {"owner_id": owner_id})
             log.info(f"[admin_change] Channel terdaftar: {update.chat.title} ({channel_id})")
+
+            # Pastikan bot subscribe ke updates channel ini
+            # (Telegram hanya kirim UpdateDeleteChannelMessages ke bot
+            #  yang pernah resolve/fetch channel tersebut)
+            try:
+                await client.get_chat(channel_id)
+            except Exception:
+                pass
 
             if inviter:
                 await safe_send(client.send_message(
@@ -358,37 +366,38 @@ async def repost(client: Client, message: Message):
 
 
 # ═══════════════════════════════════════════════════════════
-#  HAPUS REPOST JIKA POST ASLI DIHAPUS
+#  HAPUS REPOST — dua lapisan: raw update + polling backup
 # ═══════════════════════════════════════════════════════════
 
 @Client.on_raw_update()
-async def delete_repost(client: Client, update, users, chats):
+async def on_raw_delete(client: Client, update, users, chats):
     """
-    Tangkap UpdateDeleteChannelMessages langsung dari raw MTProto.
-    channel_id di raw update = integer positif (tanpa -100 prefix).
-    Pyrogram menyimpan channel sebagai -100xxxxxxxxx.
+    Lapisan 1: tangkap UpdateDeleteChannelMessages dari raw MTProto.
+    Ini bekerja HANYA jika Telegram mengirim event ke bot (bot harus admin
+    dengan permission Delete Messages di channel partner).
+    Lapisan 2 (polling) sebagai backup jika event tidak diterima.
     """
     if not isinstance(update, raw.types.UpdateDeleteChannelMessages):
         return
-
-    # Raw MTProto channel_id positif → konversi ke format Pyrogram
     raw_channel_id = update.channel_id
     channel_id     = int(f"-100{raw_channel_id}")
+    log.debug(f"[raw_delete] channel={channel_id} msgs={update.messages}")
+    await _process_deleted(client, channel_id, update.messages)
 
-    log.debug(f"[delete_repost] raw_channel_id={raw_channel_id} "
-              f"→ channel_id={channel_id}, msg_ids={update.messages}")
 
-    # Cek di database: ada tidak post dari channel ini?
-    for msg_id in update.messages:
+async def _process_deleted(client, channel_id: int, msg_ids: list):
+    """Cek DB dan hapus repost di channel utama untuk setiap msg_id yang dihapus."""
+    for msg_id in msg_ids:
         post = get_post(channel_id, msg_id)
-        log.debug(f"[delete_repost] get_post({channel_id}, {msg_id}) = {post}")
         if not post:
             continue
         ok = await safe_delete(client, MAIN_CHANNEL_ID, post["main_msg_id"])
         if ok:
-            log.info(f"[delete_repost] ✅ Hapus repost main_msg_id={post['main_msg_id']} "
-                     f"(partner={channel_id} msg={msg_id})")
+            log.info(f"[delete_repost] ✅ main_msg_id={post['main_msg_id']} "
+                     f"dihapus (partner={channel_id} msg={msg_id})")
             log_activity("repost_deleted", channel_id, {"main_msg_id": post["main_msg_id"]})
         else:
             log.warning(f"[delete_repost] ❌ Gagal hapus main_msg_id={post['main_msg_id']}")
         delete_post(channel_id, msg_id)
+
+
