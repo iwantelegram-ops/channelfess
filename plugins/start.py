@@ -329,9 +329,9 @@ async def cb_bantuan_page(client: Client, cb):
     try:
         await cb.message.edit_text(pages[page], reply_markup=markup, parse_mode=PM)
     except Exception:
-        pass
+        # edit gagal (reply message / sudah dihapus) → kirim pesan baru
+        await cb.message.reply(pages[page], reply_markup=markup, parse_mode=PM)
     await answer_cb(cb)
-
 
 @Client.on_callback_query(filters.regex(r"^noop_bantuan$"))
 async def cb_noop_bantuan(client: Client, cb):
