@@ -59,9 +59,6 @@ async def cmd_cancel(client: Client, message: Message):
 
 @Client.on_message(filters.private, group=-1)
 async def global_guard(client: Client, message: Message):
-    log.info(f"[guard] masuk: user_id={message.from_user.id if message.from_user else 'none'}, text={message.text!r}")  # ← TAMBAH INI
-  #  user_id = message.from_user.id if message.from_user else None
-    ...
     """
     Gate keeper — berjalan di group -1 (SEBELUM semua handler lain).
     Jika user diblokir atau kena rate-limit: kirim peringatan + StopPropagation.
