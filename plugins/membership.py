@@ -74,10 +74,13 @@ async def _send_channel_welcome(client: Client):
 async def _expire_channel_welcome(client: Client, msg_id: int):
     await asyncio.sleep(CHANNEL_WELCOME_TTL)
     async with _welcome_lock:
-        await safe_delete(client, MAIN_CHANNEL_ID, msg_id)
+        # FIX: clear DB dulu sebelum delete, supaya welcome baru bisa
+        # langsung dikirim tanpa menunggu delete selesai
         current = get_bot_setting(WELCOME_SETTING_KEY)
         if current and current.get("msg_id") == msg_id:
             set_bot_setting(WELCOME_SETTING_KEY, {"msg_id": None, "sent_at": None})
+    # delete dilakukan di luar lock (tidak perlu hold lock saat I/O Telegram)
+    await safe_delete(client, MAIN_CHANNEL_ID, msg_id)
 
 WELCOME_TEXT = (
     "🎉 <b>Verifikasi berhasil!</b>\n\n"
