@@ -4,8 +4,7 @@ Group -1 agar berjalan SEBELUM semua handler lain.
 Jika user banned atau kena rate-limit, StopPropagation mencegah handler lain jalan.
 """
 import logging
-from pyrogram import Client, filters
-from pyrogram.errors import StopPropagation
+from pyrogram import Client, filters, StopPropagation
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.enums import ParseMode
 
