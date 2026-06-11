@@ -371,17 +371,16 @@ async def repost(client: Client, message: Message):
 
 @Client.on_raw_update()
 async def on_raw_delete(client: Client, update, users, chats):
-    """
-    Lapisan 1: tangkap UpdateDeleteChannelMessages dari raw MTProto.
-    Ini bekerja HANYA jika Telegram mengirim event ke bot (bot harus admin
-    dengan permission Delete Messages di channel partner).
-    Lapisan 2 (polling) sebagai backup jika event tidak diterima.
-    """
+    # Log SEMUA raw update yang masuk untuk diagnosa
+    update_type = type(update).__name__
+    if "delete" in update_type.lower() or "Delete" in update_type:
+        log.info(f"[RAW_SPY] DELETE event: {update_type} | data={update}")
+
     if not isinstance(update, raw.types.UpdateDeleteChannelMessages):
         return
     raw_channel_id = update.channel_id
     channel_id     = int(f"-100{raw_channel_id}")
-    log.debug(f"[raw_delete] channel={channel_id} msgs={update.messages}")
+    log.info(f"[raw_delete] channel={channel_id} msgs={update.messages}")
     await _process_deleted(client, channel_id, update.messages)
 
 
