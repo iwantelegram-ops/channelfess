@@ -1,7 +1,8 @@
 """
 /start — welcome screen, owner vs user.
+Parse mode: HTML di seluruh file.
 """
-from pyrogram import Client, filters
+from pyrogram import Client, filters, enums
 from pyrogram.types import (
     Message,
     InlineKeyboardMarkup, InlineKeyboardButton,
@@ -12,33 +13,36 @@ from db.helpers import upsert_user, get_maintenance
 from utils import check_membership
 from datetime import datetime
 
+PM = enums.ParseMode.HTML
+
 # ── Teks ──────────────────────────────────────────────────
 
 OWNER_WELCOME = (
-    "⚡ **FessBot — Control Panel**\n\n"
-    "`System online · All services running`\n\n"
+    "⚡ <b>FessBot — Control Panel</b>\n\n"
+    "<code>System online · All services running</code>\n\n"
     "Gunakan menu di bawah layar. 👇"
 )
 
 USER_NOT_JOINED = (
-    "👋 **Halo, {name}!**\n\n"
-    "Sebelum lanjut, join **channel utama** dulu ya.\n\n"
-    "Tap **Join** → lalu **Cek Ulang**."
+    "👋 <b>Halo, {name}!</b>\n\n"
+    "Sebelum lanjut, join <b>channel utama</b> dulu ya.\n\n"
+    "Tap <b>Join</b> → lalu <b>Cek Ulang</b>."
 )
 
 USER_JOINED = (
-    "⚡ **Halo, {name}!**\n\n"
-    "**FessBot** otomatis repost foto & video dari channelmu ke channel utama.\n\n"
-    "**Setup:**\n"
-    "`1.` Tambah bot sebagai **Admin** di channelmu\n"
-    "`2.` Channel terdaftar otomatis\n"
-    "`3.` Konten di-repost real-time ✅\n\n"
-    "Buka **My Channel** untuk mulai. 👇"
+    "⚡ <b>Halo, {name}!</b>\n\n"
+    "<b>FessBot</b> otomatis repost foto &amp; video dari channelmu ke channel utama.\n\n"
+    "<b>Setup:</b>\n"
+    "<code>1.</code> Tambah bot sebagai <b>Admin</b> di channelmu\n"
+    "<code>2.</code> Channel terdaftar otomatis\n"
+    "<code>3.</code> Konten di-repost real-time ✅\n\n"
+    "Buka <b>My Channel</b> untuk mulai. 👇"
 )
 
 # ── Keyboards ─────────────────────────────────────────────
 
 def owner_keyboard():
+    """Keyboard utama owner — dipakai di /start dan di-import owner.py."""
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton("📊 Dashboard"), KeyboardButton("📋 Partner")],
@@ -62,14 +66,17 @@ async def start(client: Client, message: Message):
 
     # Owner
     if user_id == OWNER_ID:
-        await message.reply(OWNER_WELCOME, reply_markup=owner_keyboard())
+        await message.reply(OWNER_WELCOME, reply_markup=owner_keyboard(), parse_mode=PM)
         return
 
     # Maintenance
     maint = get_maintenance()
     if maint.get("active"):
         reason = maint.get("reason", "Sedang maintenance.")
-        await message.reply(f"🔧 **Bot sedang maintenance**\n\n_{reason}_\n\nCoba lagi nanti ya! 🙏")
+        await message.reply(
+            f"🔧 <b>Bot sedang maintenance</b>\n\n<i>{reason}</i>\n\nCoba lagi nanti ya! 🙏",
+            parse_mode=PM
+        )
         return
 
     # User
@@ -84,7 +91,8 @@ async def start(client: Client, message: Message):
                     url=f"https://t.me/{MAIN_CHANNEL_USERNAME}")],
                 [InlineKeyboardButton("✅ Udah Join — Cek Ulang",
                     callback_data="recheck_join")],
-            ])
+            ]),
+            parse_mode=PM
         )
     else:
         upsert_user(user_id, {"joined": True, "joined_at": datetime.utcnow()})
@@ -94,7 +102,8 @@ async def start(client: Client, message: Message):
                 [InlineKeyboardButton("➕ Tambah Bot sebagai Admin",
                     url=f"https://t.me/{BOT_USERNAME}?startchannel=true"
                         f"&admin=post_messages+edit_messages+delete_messages+invite_users")],
-            ])
+            ]),
+            parse_mode=PM
         )
         await message.reply("Menu:", reply_markup=user_keyboard())
 
@@ -109,11 +118,12 @@ async def info_bot(client: Client, message: Message):
     total_r  = posts.count_documents({})
     total_u  = users.count_documents({})
     await message.reply(
-        f"ℹ️ **FessBot Info**\n"
-        f"`{'─' * 24}`\n\n"
-        f"👥 Users terdaftar   `{total_u:,}`\n"
-        f"📡 Channel partner   `{total_p}` · `{active_p}` aktif\n"
-        f"📦 Total repost      `{total_r:,}`\n\n"
+        f"ℹ️ <b>FessBot Info</b>\n"
+        f"<code>{'─' * 24}</code>\n\n"
+        f"👥 Users terdaftar   <code>{total_u}</code>\n"
+        f"📡 Channel partner   <code>{total_p}</code> · <code>{active_p}</code> aktif\n"
+        f"📦 Total repost      <code>{total_r}</code>\n\n"
         f"🤖 @{BOT_USERNAME}\n"
-        f"📢 @{MAIN_CHANNEL_USERNAME}"
+        f"📢 @{MAIN_CHANNEL_USERNAME}",
+        parse_mode=PM
     )
