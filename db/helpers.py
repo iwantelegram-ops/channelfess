@@ -4,6 +4,7 @@ from .mongo import (
     settings_col, broadcast_col, activity_col, notif_col,
 )
 from datetime import datetime, timezone, timedelta
+from pymongo.errors import DuplicateKeyError
 import re
 
 
@@ -53,14 +54,23 @@ def get_top_partners(limit: int = 5):
 def _post_id(partner_id: int, msg_id: int) -> str:
     return f"{partner_id}_{msg_id}"
 
-def save_post(partner_id: int, partner_msg_id: int, main_msg_id: int):
-    posts.insert_one({
-        "_id":            _post_id(partner_id, partner_msg_id),
-        "partner_id":     partner_id,
-        "partner_msg_id": partner_msg_id,
-        "main_msg_id":    main_msg_id,
-        "added_at":       datetime.now(timezone.utc),
-    })
+def save_post(partner_id: int, partner_msg_id: int, main_msg_id: int) -> bool:
+    """
+    Simpan mapping post. Return True jika berhasil, False jika sudah ada (duplicate).
+    FIX: tangkap DuplicateKeyError agar tidak crash saat race condition
+    (misal event Telegram diterima dua kali).
+    """
+    try:
+        posts.insert_one({
+            "_id":            _post_id(partner_id, partner_msg_id),
+            "partner_id":     partner_id,
+            "partner_msg_id": partner_msg_id,
+            "main_msg_id":    main_msg_id,
+            "added_at":       datetime.now(timezone.utc),
+        })
+        return True
+    except DuplicateKeyError:
+        return False
 
 def get_post(partner_id: int, partner_msg_id: int):
     return posts.find_one({"_id": _post_id(partner_id, partner_msg_id)})
@@ -194,7 +204,10 @@ def log_activity(event: str, partner_id: int = None, extra: dict = None):
     }
     if extra:
         doc.update(extra)
-    activity_col.insert_one(doc)
+    try:
+        activity_col.insert_one(doc)
+    except Exception:
+        pass  # FIX: jangan crash bot hanya karena gagal log
 
 def get_recent_activity(limit: int = 10, partner_id: int = None):
     query = {}
