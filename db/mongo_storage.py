@@ -14,6 +14,7 @@ import logging
 import time
 from typing import List, Tuple
 
+from pyrogram import raw
 from pyrogram.storage import Storage
 
 log = logging.getLogger("fessbot.mongo_storage")
@@ -112,6 +113,21 @@ class MongoStorage(Storage):
 
         await loop.run_in_executor(None, _write)
 
+    @staticmethod
+    def _doc_to_input_peer(doc):
+        peer_id     = doc["_id"]
+        access_hash = doc.get("access_hash") or 0
+        peer_type   = doc.get("type", "")
+        if peer_type in ("user", "bot"):
+            return raw.types.InputPeerUser(user_id=peer_id, access_hash=access_hash)
+        elif peer_type == "group":
+            chat_id = peer_id if peer_id > 0 else -peer_id
+            return raw.types.InputPeerChat(chat_id=chat_id)
+        elif peer_type in ("channel", "supergroup"):
+            chan_id = peer_id if peer_id > 0 else -peer_id - 1000000000000
+            return raw.types.InputPeerChannel(channel_id=chan_id, access_hash=access_hash)
+        raise KeyError(f"Unknown peer type '{peer_type}' for id {peer_id}")
+
     async def get_peer_by_id(self, peer_id: int):
         loop = asyncio.get_event_loop()
         doc = await loop.run_in_executor(
@@ -119,7 +135,7 @@ class MongoStorage(Storage):
         )
         if not doc:
             raise KeyError(f"ID {peer_id} not in peer cache")
-        return doc["_id"], doc.get("access_hash"), doc.get("type")
+        return self._doc_to_input_peer(doc)
 
     async def get_peer_by_username(self, username: str):
         loop = asyncio.get_event_loop()
@@ -128,7 +144,7 @@ class MongoStorage(Storage):
         )
         if not doc:
             raise KeyError(f"@{username} not in peer cache")
-        return doc["_id"], doc.get("access_hash"), doc.get("type")
+        return self._doc_to_input_peer(doc)
 
     async def get_peer_by_phone_number(self, phone_number: str):
         loop = asyncio.get_event_loop()
@@ -137,7 +153,7 @@ class MongoStorage(Storage):
         )
         if not doc:
             raise KeyError(f"Phone {phone_number} not in peer cache")
-        return doc["_id"], doc.get("access_hash"), doc.get("type")
+        return self._doc_to_input_peer(doc)
 
     # ── Async getter/setter methods (Pyrogram 2.0.106) ──
     #
