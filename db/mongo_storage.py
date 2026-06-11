@@ -73,20 +73,18 @@ class MongoStorage(Storage):
     # ── Storage interface ──────────────────────────────────
 
     async def open(self):
-        # FIX: gunakan asyncio.get_running_loop() + run_in_executor
-        # (get_event_loop() deprecated di Python 3.10+ di luar async context)
-        loop = asyncio.get_running_loop()
+        loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._load)
 
     async def save(self):
-        loop = asyncio.get_running_loop()
+        loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._dump)
 
     async def close(self):
         await self.save()
 
     async def delete(self):
-        loop = asyncio.get_running_loop()
+        loop = asyncio.get_event_loop()
         await loop.run_in_executor(
             None, lambda: self._sessions.delete_one({"_id": self._name})
         )
@@ -96,7 +94,7 @@ class MongoStorage(Storage):
     async def update_peers(self, peers: List[Tuple[int, int, str, str, str]]):
         if not peers:
             return
-        loop = asyncio.get_running_loop()
+        loop = asyncio.get_event_loop()
 
         def _write():
             for peer in peers:
@@ -123,18 +121,15 @@ class MongoStorage(Storage):
         if peer_type in ("user", "bot"):
             return raw.types.InputPeerUser(user_id=peer_id, access_hash=access_hash)
         elif peer_type == "group":
-            # chat_id untuk group selalu positif di MTProto
-            chat_id = abs(peer_id)
+            chat_id = peer_id if peer_id > 0 else -peer_id
             return raw.types.InputPeerChat(chat_id=chat_id)
         elif peer_type in ("channel", "supergroup"):
-            # FIX: channel_id MTProto = abs(peer_id) - 1000000000000
-            # peer_id disimpan sebagai format Pyrogram (-100xxxxxxxxxx)
-            chan_id = abs(peer_id) - 1000000000000
+            chan_id = peer_id if peer_id > 0 else -peer_id - 1000000000000
             return raw.types.InputPeerChannel(channel_id=chan_id, access_hash=access_hash)
         raise KeyError(f"Unknown peer type '{peer_type}' for id {peer_id}")
 
     async def get_peer_by_id(self, peer_id: int):
-        loop = asyncio.get_running_loop()
+        loop = asyncio.get_event_loop()
         doc = await loop.run_in_executor(
             None, lambda: self._peers_col.find_one({"_id": peer_id})
         )
@@ -143,7 +138,7 @@ class MongoStorage(Storage):
         return self._doc_to_input_peer(doc)
 
     async def get_peer_by_username(self, username: str):
-        loop = asyncio.get_running_loop()
+        loop = asyncio.get_event_loop()
         doc = await loop.run_in_executor(
             None, lambda: self._peers_col.find_one({"username": username.lower()})
         )
@@ -152,7 +147,7 @@ class MongoStorage(Storage):
         return self._doc_to_input_peer(doc)
 
     async def get_peer_by_phone_number(self, phone_number: str):
-        loop = asyncio.get_running_loop()
+        loop = asyncio.get_event_loop()
         doc = await loop.run_in_executor(
             None, lambda: self._peers_col.find_one({"phone": phone_number})
         )
