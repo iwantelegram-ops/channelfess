@@ -7,7 +7,7 @@ from pymongo import MongoClient, DESCENDING, ASCENDING
 from config import MONGO_URI
 from pymongo.server_api import ServerApi
 
-client = MongoClient(MONGO_URI, server_api=ServerApi('-2'))
+client = MongoClient(MONGO_URI, server_api=ServerApi('1'))
 db = client["fessbot"]
 
 partners      = db["partners"]
