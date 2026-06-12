@@ -3,6 +3,16 @@ import dns.resolver
 dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
 dns.resolver.default_resolver.nameservers = ["8.8.8.8", "8.8.4.4"]
 
+from pymongo import MongoClient
+from pymongo.server_api import ServerApi
+
+uri = "mongodb+srv://<db_username>:<db_password>@cluster0.pmsqjze.mongodb.net/?appName=Cluster0"
+
+# Create a new client and connect to the server
+client = MongoClient(uri, server_api=ServerApi('1'))
+
+# Send a ping to confirm a successful connection
+
 from pymongo import MongoClient, DESCENDING, ASCENDING
 from config import MONGO_URI
 
@@ -40,8 +50,8 @@ def ensure_indexes():
     partners.create_index([("owner_id", 1)])
     partners.create_index([("paused", 1)])
 
-
 try:
-    ensure_indexes()
-except Exception:
-    pass
+    client.admin.command('ping')
+    print("Pinged your deployment. You successfully connected to MongoDB!")
+except Exception as e:
+    print(e)
