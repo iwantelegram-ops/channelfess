@@ -37,7 +37,7 @@ PM        = ParseMode.HTML
 PAGE_SIZE = 8
 SEP       = "─" * 30
 
-# ─── In-memory state (ephemeral, tidak perlu persist) ──────
+# ─── In-memory state (ephemeral) ──────────────────────────
 _search_pending:    set[int] = set()
 _bl_add_pending:    set[int] = set()
 _bl_del_pending:    set[int] = set()
@@ -52,19 +52,22 @@ _viewing_channel:   dict[int, int] = {}
 # ═══════════════════════════════════════════════════════════
 
 def owner_only(func):
+    """
+    Decorator: hanya izinkan OWNER_ID.
+    TIDAK memanggil answer_cb di blok except — biarkan fungsi
+    yang dibungkus menanganinya sendiri lewat finally block masing-masing.
+    """
     @functools.wraps(func)
     async def wrapper(client, obj, *args, **kwargs):
         uid = getattr(getattr(obj, "from_user", None), "id", 0)
         if uid != OWNER_ID:
             if hasattr(obj, "answer"):
-                await answer_cb(obj, "🚫 Akses ditolak.", show_alert=True)
+                try:
+                    await obj.answer("🚫 Akses ditolak.", show_alert=True)
+                except Exception:
+                    pass
             return
-        try:
-            return await func(client, obj, *args, **kwargs)
-        except Exception as e:
-            log.error(f"[owner:{func.__name__}] {e}")
-            if hasattr(obj, "answer"):
-                await answer_cb(obj, "❌ Terjadi error.", show_alert=True)
+        return await func(client, obj, *args, **kwargs)
     return wrapper
 
 
@@ -74,10 +77,6 @@ def owner_only(func):
 
 def back_home():
     return [[InlineKeyboardButton("🏠 Menu Utama", callback_data="home")]]
-
-
-def back_row(cb_data: str, label: str = "◀️ Kembali"):
-    return [InlineKeyboardButton(label, callback_data=cb_data)]
 
 
 # ═══════════════════════════════════════════════════════════
@@ -150,15 +149,22 @@ def _dashboard_markup():
 @Client.on_callback_query(filters.regex(r"^owner_dashboard$"))
 @owner_only
 async def cb_dashboard(client: Client, cb: CallbackQuery):
-    await safe_edit(cb.message, _dashboard_text(), markup=_dashboard_markup(), parse_mode=PM)
-    await answer_cb(cb)
+    try:
+        await safe_edit(cb.message, _dashboard_text(), markup=_dashboard_markup(), parse_mode=PM)
+    except Exception as e:
+        log.error(f"[cb_dashboard] {e}")
+    finally:
+        await answer_cb(cb)
 
 
 @Client.on_message(filters.command("stats") & filters.private)
 @owner_only
 async def cmd_stats(client: Client, message: Message):
-    msg = await message.reply(_dashboard_text(), reply_markup=_dashboard_markup(), parse_mode=PM)
-    store_msg(message.from_user.id, msg)
+    try:
+        msg = await message.reply(_dashboard_text(), reply_markup=_dashboard_markup(), parse_mode=PM)
+        store_msg(message.from_user.id, msg)
+    except Exception as e:
+        log.error(f"[cmd_stats] {e}")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -273,15 +279,18 @@ async def cb_partner_list(client: Client, cb: CallbackQuery):
 @Client.on_message(filters.command("listpartner") & filters.private)
 @owner_only
 async def cmd_listpartner(client: Client, message: Message):
-    all_p = get_all_partners()
-    if not all_p:
-        text   = "📋 <b>Channel Partner</b>\n\nBelum ada partner."
-        markup = InlineKeyboardMarkup(back_home())
-    else:
-        text   = _partner_list_text(all_p, 0)
-        markup = _build_partner_list_markup(all_p, 0)
-    msg = await message.reply(text, reply_markup=markup, parse_mode=PM)
-    store_msg(message.from_user.id, msg)
+    try:
+        all_p = get_all_partners()
+        if not all_p:
+            text   = "📋 <b>Channel Partner</b>\n\nBelum ada partner."
+            markup = InlineKeyboardMarkup(back_home())
+        else:
+            text   = _partner_list_text(all_p, 0)
+            markup = _build_partner_list_markup(all_p, 0)
+        msg = await message.reply(text, reply_markup=markup, parse_mode=PM)
+        store_msg(message.from_user.id, msg)
+    except Exception as e:
+        log.error(f"[cmd_listpartner] {e}")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -339,11 +348,13 @@ def _partner_detail_markup(partner: dict, channel_id: int) -> InlineKeyboardMark
 @Client.on_callback_query(filters.regex(r"^owner_ch_(-?\d+)$"))
 @owner_only
 async def cb_owner_ch_detail(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         channel_id = int(cb.matches[0].group(1))
         partner    = get_partner(channel_id)
         if not partner:
             await answer_cb(cb, "Channel tidak ditemukan.", True)
+            answered = True
             return
         _viewing_channel[cb.from_user.id] = channel_id
         await safe_edit(
@@ -355,20 +366,24 @@ async def cb_owner_ch_detail(client: Client, cb: CallbackQuery):
     except Exception as e:
         log.error(f"[cb_owner_ch_detail] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 @Client.on_callback_query(filters.regex(r"^owner_pause_(-?\d+)$"))
 @owner_only
 async def cb_owner_pause(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         channel_id = int(cb.matches[0].group(1))
         partner    = get_partner(channel_id)
         if not partner:
             await answer_cb(cb, "Channel tidak ditemukan.", True)
+            answered = True
             return
         upsert_partner(channel_id, {"paused": True, "reason": "Dijeda oleh admin"})
         await answer_cb(cb, "⏸ Channel dijeda.")
+        answered = True
         oid = partner.get("owner_id")
         if oid:
             try:
@@ -390,20 +405,24 @@ async def cb_owner_pause(client: Client, cb: CallbackQuery):
     except Exception as e:
         log.error(f"[cb_owner_pause] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 @Client.on_callback_query(filters.regex(r"^owner_run_(-?\d+)$"))
 @owner_only
 async def cb_owner_run(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         channel_id = int(cb.matches[0].group(1))
         partner    = get_partner(channel_id)
         if not partner:
             await answer_cb(cb, "Channel tidak ditemukan.", True)
+            answered = True
             return
         upsert_partner(channel_id, {"paused": False, "reason": ""})
         await answer_cb(cb, "▶️ Channel aktif!")
+        answered = True
         oid = partner.get("owner_id")
         if oid:
             try:
@@ -425,22 +444,26 @@ async def cb_owner_run(client: Client, cb: CallbackQuery):
     except Exception as e:
         log.error(f"[cb_owner_run] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 @Client.on_callback_query(filters.regex(r"^owner_mf_(-?\d+)_(\w+)$"))
 @owner_only
 async def cb_owner_mf(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         channel_id = int(cb.matches[0].group(1))
         new_mf     = cb.matches[0].group(2)
         partner    = get_partner(channel_id)
         if not partner:
             await answer_cb(cb, "Channel tidak ditemukan.", True)
+            answered = True
             return
         upsert_partner(channel_id, {"media_filter": new_mf})
         mf_label = {"all": "Semua", "photo": "Foto saja", "video": "Video saja", "text": "Teks saja"}
         await answer_cb(cb, f"✅ Filter: {mf_label.get(new_mf, new_mf)}")
+        answered = True
         p_fresh = get_partner(channel_id)
         await safe_edit(
             cb.message,
@@ -451,17 +474,20 @@ async def cb_owner_mf(client: Client, cb: CallbackQuery):
     except Exception as e:
         log.error(f"[cb_owner_mf] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 @Client.on_callback_query(filters.regex(r"^owner_remove_confirm_(-?\d+)$"))
 @owner_only
 async def cb_owner_remove_confirm(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         channel_id = int(cb.matches[0].group(1))
         partner    = get_partner(channel_id)
         if not partner:
             await answer_cb(cb, "Channel tidak ditemukan.", True)
+            answered = True
             return
         text = (
             f"🗑️ <b>Hapus Channel?</b>\n\n"
@@ -476,18 +502,21 @@ async def cb_owner_remove_confirm(client: Client, cb: CallbackQuery):
     except Exception as e:
         log.error(f"[cb_owner_remove_confirm] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 @Client.on_callback_query(filters.regex(r"^owner_remove_do_(-?\d+)$"))
 @owner_only
 async def cb_owner_remove_do(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         channel_id = int(cb.matches[0].group(1))
         partner    = get_partner(channel_id)
         ch_name    = partner.get("channel_name", str(channel_id)) if partner else str(channel_id)
         upsert_partner(channel_id, {"paused": True, "reason": "Dilepas oleh admin", "owner_id": None})
         await answer_cb(cb, "✅ Channel dilepas.")
+        answered = True
         await safe_edit(
             cb.message,
             f"✅ <b>Channel dilepas.</b>\n\n📡 <b>{ch_name}</b> sudah dilepas dari bot.",
@@ -497,7 +526,8 @@ async def cb_owner_remove_do(client: Client, cb: CallbackQuery):
     except Exception as e:
         log.error(f"[cb_owner_remove_do] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -523,28 +553,26 @@ async def cb_owner_search(client: Client, cb: CallbackQuery):
         await answer_cb(cb)
 
 
-@Client.on_message(filters.text & filters.private, group=3)
+# PERBAIKAN: Tambah ~filters.command() agar tidak memproses perintah /start /stats dll
+@Client.on_message(filters.text & filters.private & ~filters.command(), group=3)
 @owner_only
 async def handle_owner_text_input(client: Client, message: Message):
-    uid   = message.from_user.id
-    text  = message.text.strip()
+    uid  = message.from_user.id
+    text = message.text.strip()
 
     # ─── Search ──────────────────────────────────────
     if uid in _search_pending:
-        if text.startswith("/"):
-            _search_pending.discard(uid)
-            return
         _search_pending.discard(uid)
         results = search_partners(text)
         if not results:
-            out = f"🔎 <b>Tidak ditemukan:</b> <i>{text}</i>"
+            out    = f"🔎 <b>Tidak ditemukan:</b> <i>{text}</i>"
             markup = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Partner", callback_data="owner_partner_0")]])
         else:
             lines = [f"🔎 <b>Hasil: {len(results)} channel</b>\n<code>{SEP}</code>"]
             rows  = []
             for ch in results[:10]:
-                icon  = "▶️" if not ch.get("paused") else "⏸"
-                name  = (ch.get("channel_name") or "?")[:30]
+                icon = "▶️" if not ch.get("paused") else "⏸"
+                name = (ch.get("channel_name") or "?")[:30]
                 lines.append(f"\n{icon} <b>{name}</b>")
                 rows.append([InlineKeyboardButton(f"{icon} {name}", callback_data=f"owner_ch_{ch['_id']}")])
             rows.append([InlineKeyboardButton("◀️ Partner", callback_data="owner_partner_0")])
@@ -556,9 +584,6 @@ async def handle_owner_text_input(client: Client, message: Message):
 
     # ─── Blacklist add ───────────────────────────────
     if uid in _bl_add_pending:
-        if text.startswith("/"):
-            _bl_add_pending.discard(uid)
-            return
         _bl_add_pending.discard(uid)
         add_blacklist(text)
         msg = await message.reply(
@@ -571,9 +596,6 @@ async def handle_owner_text_input(client: Client, message: Message):
 
     # ─── Blacklist del ───────────────────────────────
     if uid in _bl_del_pending:
-        if text.startswith("/"):
-            _bl_del_pending.discard(uid)
-            return
         _bl_del_pending.discard(uid)
         remove_blacklist(text)
         msg = await message.reply(
@@ -586,9 +608,6 @@ async def handle_owner_text_input(client: Client, message: Message):
 
     # ─── Ban pending ─────────────────────────────────
     if uid in _ban_pending:
-        if text.startswith("/"):
-            _ban_pending.discard(uid)
-            return
         _ban_pending.discard(uid)
         try:
             target_id = int(text.strip())
@@ -610,9 +629,6 @@ async def handle_owner_text_input(client: Client, message: Message):
 
     # ─── Caption pending ─────────────────────────────
     if uid in _caption_pending:
-        if text.startswith("/"):
-            _caption_pending.discard(uid)
-            return
         _caption_pending.discard(uid)
         set_caption_template(text)
         msg = await message.reply(
@@ -626,9 +642,6 @@ async def handle_owner_text_input(client: Client, message: Message):
 
     # ─── Maint reason pending ────────────────────────
     if uid in _maint_reason:
-        if text.startswith("/"):
-            _maint_reason.discard(uid)
-            return
         _maint_reason.discard(uid)
         set_maintenance(True, text)
         msg = await message.reply(
@@ -661,15 +674,15 @@ async def cb_tools(client: Client, cb: CallbackQuery):
         )
         markup = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("🚫 Blacklist",      callback_data="owner_blacklist"),
-                InlineKeyboardButton("🔧 Maintenance",    callback_data="owner_maintenance"),
+                InlineKeyboardButton("🚫 Blacklist",        callback_data="owner_blacklist"),
+                InlineKeyboardButton("🔧 Maintenance",      callback_data="owner_maintenance"),
             ],
             [
                 InlineKeyboardButton("📝 Caption Template", callback_data="owner_caption"),
                 InlineKeyboardButton("🏥 Health Check",     callback_data="owner_health"),
             ],
             [
-                InlineKeyboardButton("🔄 Reset Settings",  callback_data="owner_reset_settings_confirm"),
+                InlineKeyboardButton("🔄 Reset Settings",   callback_data="owner_reset_settings_confirm"),
             ],
             back_home(),
         ])
@@ -707,8 +720,8 @@ async def cb_blacklist(client: Client, cb: CallbackQuery):
                 InlineKeyboardButton("➕ Tambah Kata", callback_data="owner_bl_add"),
                 InlineKeyboardButton("➖ Hapus Kata",  callback_data="owner_bl_del"),
             ],
-            [InlineKeyboardButton("🗑️ Hapus Semua", callback_data="owner_bl_clear_confirm")],
-            [InlineKeyboardButton("◀️ Tools", callback_data="owner_tools")],
+            [InlineKeyboardButton("🗑️ Hapus Semua",   callback_data="owner_bl_clear_confirm")],
+            [InlineKeyboardButton("◀️ Tools",          callback_data="owner_tools")],
         ])
         await safe_edit(cb.message, text, markup=markup, parse_mode=PM)
     except Exception as e:
@@ -724,7 +737,7 @@ async def cb_bl_add(client: Client, cb: CallbackQuery):
         _bl_add_pending.add(cb.from_user.id)
         await safe_edit(
             cb.message,
-            f"➕ <b>Tambah Kata Blacklist</b>\n\nKetik kata yang ingin diblacklist:\n\n<i>Kirim /cancel untuk batal</i>",
+            "➕ <b>Tambah Kata Blacklist</b>\n\nKetik kata yang ingin diblacklist:\n\n<i>Kirim /cancel untuk batal</i>",
             markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Batal", callback_data="owner_blacklist")]]),
             parse_mode=PM,
         )
@@ -737,23 +750,25 @@ async def cb_bl_add(client: Client, cb: CallbackQuery):
 @Client.on_callback_query(filters.regex(r"^owner_bl_del$"))
 @owner_only
 async def cb_bl_del(client: Client, cb: CallbackQuery):
+    answered = False
     try:
-        _bl_del_pending.add(cb.from_user.id)
         words = get_blacklist()
         if not words:
             await answer_cb(cb, "Blacklist kosong.", True)
-            _bl_del_pending.discard(cb.from_user.id)
+            answered = True
             return
+        _bl_del_pending.add(cb.from_user.id)
         await safe_edit(
             cb.message,
-            f"➖ <b>Hapus Kata Blacklist</b>\n\nKetik kata yang ingin dihapus:\n\n<i>Kirim /cancel untuk batal</i>",
+            "➖ <b>Hapus Kata Blacklist</b>\n\nKetik kata yang ingin dihapus:\n\n<i>Kirim /cancel untuk batal</i>",
             markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Batal", callback_data="owner_blacklist")]]),
             parse_mode=PM,
         )
     except Exception as e:
         log.error(f"[cb_bl_del] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 @Client.on_callback_query(filters.regex(r"^owner_bl_clear_confirm$"))
@@ -765,7 +780,7 @@ async def cb_bl_clear_confirm(client: Client, cb: CallbackQuery):
             "🗑️ <b>Hapus Semua Blacklist?</b>\n\nSemua kata akan dihapus permanen.",
             markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("✅ Ya, Hapus Semua", callback_data="owner_bl_clear_do"),
-                InlineKeyboardButton("❌ Batal", callback_data="owner_blacklist"),
+                InlineKeyboardButton("❌ Batal",            callback_data="owner_blacklist"),
             ]]),
             parse_mode=PM,
         )
@@ -778,20 +793,23 @@ async def cb_bl_clear_confirm(client: Client, cb: CallbackQuery):
 @Client.on_callback_query(filters.regex(r"^owner_bl_clear_do$"))
 @owner_only
 async def cb_bl_clear_do(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         from db.mongo import blacklist_col
         blacklist_col.delete_one({"_id": "global"})
         await answer_cb(cb, "✅ Blacklist dikosongkan.")
+        answered = True
         await safe_edit(
             cb.message,
             "✅ <b>Blacklist dikosongkan.</b>",
-            markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Blacklist", callback_data="owner_blacklist")]]),
+            markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Tools", callback_data="owner_tools")]]),
             parse_mode=PM,
         )
     except Exception as e:
         log.error(f"[cb_bl_clear_do] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -802,26 +820,49 @@ async def cb_bl_clear_do(client: Client, cb: CallbackQuery):
 @owner_only
 async def cb_maintenance(client: Client, cb: CallbackQuery):
     try:
-        maint = get_maintenance()
-        active = maint.get("active")
+        maint  = get_maintenance()
+        active = maint.get("active", False)
         reason = maint.get("reason", "—")
+        status = "🔴 Aktif" if active else "🟢 Nonaktif"
         text = (
-            f"🔧 <b>Maintenance Mode</b>\n"
+            f"🔧 <b>Mode Maintenance</b>\n"
             f"<code>{SEP}</code>\n\n"
-            f"Status   {'🔴 Aktif' if active else '🟢 Nonaktif'}\n"
-            f"Alasan   <i>{reason or '—'}</i>"
+            f"Status   {status}\n"
+            f"Alasan   <i>{reason or '—'}</i>\n\n"
+            f"Saat maintenance aktif, hanya Owner yang bisa akses bot."
         )
         rows = []
         if active:
-            rows.append([InlineKeyboardButton("🟢 Nonaktifkan", callback_data="owner_maint_off")])
+            rows.append([InlineKeyboardButton("🟢 Nonaktifkan Maintenance", callback_data="owner_maint_off")])
         else:
-            rows.append([InlineKeyboardButton("🔴 Aktifkan Maintenance", callback_data="owner_maint_on")])
+            rows.append([InlineKeyboardButton("🔴 Aktifkan Maintenance",    callback_data="owner_maint_on")])
         rows.append([InlineKeyboardButton("◀️ Tools", callback_data="owner_tools")])
         await safe_edit(cb.message, text, markup=InlineKeyboardMarkup(rows), parse_mode=PM)
     except Exception as e:
         log.error(f"[cb_maintenance] {e}")
     finally:
         await answer_cb(cb)
+
+
+@Client.on_callback_query(filters.regex(r"^owner_maint_off$"))
+@owner_only
+async def cb_maint_off(client: Client, cb: CallbackQuery):
+    answered = False
+    try:
+        set_maintenance(False, "")
+        await answer_cb(cb, "🟢 Maintenance dinonaktifkan.")
+        answered = True
+        await safe_edit(
+            cb.message,
+            "🟢 <b>Maintenance dinonaktifkan.</b>\n\nBot kembali normal.",
+            markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Tools", callback_data="owner_tools")]]),
+            parse_mode=PM,
+        )
+    except Exception as e:
+        log.error(f"[cb_maint_off] {e}")
+    finally:
+        if not answered:
+            await answer_cb(cb)
 
 
 @Client.on_callback_query(filters.regex(r"^owner_maint_on$"))
@@ -841,19 +882,6 @@ async def cb_maint_on(client: Client, cb: CallbackQuery):
         await answer_cb(cb)
 
 
-@Client.on_callback_query(filters.regex(r"^owner_maint_off$"))
-@owner_only
-async def cb_maint_off(client: Client, cb: CallbackQuery):
-    try:
-        set_maintenance(False, "")
-        await answer_cb(cb, "🟢 Maintenance dinonaktifkan.")
-        await cb_maintenance(client, cb)
-    except Exception as e:
-        log.error(f"[cb_maint_off] {e}")
-    finally:
-        await answer_cb(cb)
-
-
 # ═══════════════════════════════════════════════════════════
 #  📝 CAPTION TEMPLATE
 # ═══════════════════════════════════════════════════════════
@@ -862,22 +890,18 @@ async def cb_maint_off(client: Client, cb: CallbackQuery):
 @owner_only
 async def cb_caption(client: Client, cb: CallbackQuery):
     try:
-        current = get_caption_template()
+        tpl  = get_caption_template()
         text = (
             f"📝 <b>Caption Template</b>\n"
             f"<code>{SEP}</code>\n\n"
-            f"<b>Template saat ini:</b>\n"
-            f"<code>{current[:300]}</code>\n\n"
-            f"<b>Variabel tersedia:</b>\n"
-            f"<code>{{channel_link}}</code> — link channel\n"
-            f"<code>{{original_caption}}</code> — caption asli\n"
-            f"<code>{{owner_link}}</code> — nama owner (clickable)\n"
-            f"<code>{{date}}</code> — tanggal\n"
-            f"<code>{{time}}</code> — jam UTC\n"
-            f"<code>{{bot_link}}</code> — link bot"
+            f"Template saat ini:\n<code>{tpl[:500]}</code>\n\n"
+            f"Variabel tersedia:\n"
+            f"<code>{{channel_link}}</code> <code>{{original_caption}}</code>\n"
+            f"<code>{{owner_link}}</code> <code>{{date}}</code> <code>{{time}}</code>\n"
+            f"<code>{{bot_link}}</code> <code>{{post_number}}</code>"
         )
         markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✏️ Edit Template", callback_data="owner_caption_edit")],
+            [InlineKeyboardButton("✏️ Ubah Template", callback_data="owner_caption_edit")],
             [InlineKeyboardButton("🔄 Reset Default",  callback_data="owner_caption_reset")],
             [InlineKeyboardButton("◀️ Tools",          callback_data="owner_tools")],
         ])
@@ -908,159 +932,59 @@ async def cb_caption_edit(client: Client, cb: CallbackQuery):
 @Client.on_callback_query(filters.regex(r"^owner_caption_reset$"))
 @owner_only
 async def cb_caption_reset(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         reset_caption_template()
-        await answer_cb(cb, "✅ Template direset ke default.")
-        await cb_caption(client, cb)
+        await answer_cb(cb, "✅ Caption direset ke default.")
+        answered = True
+        await safe_edit(
+            cb.message,
+            f"✅ <b>Caption template direset.</b>\n\n<code>{DEFAULT_CAPTION_TEMPLATE[:300]}</code>",
+            markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Caption", callback_data="owner_caption")]]),
+            parse_mode=PM,
+        )
     except Exception as e:
         log.error(f"[cb_caption_reset] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 # ═══════════════════════════════════════════════════════════
-#  🏥 HEALTH CHECK — cek bot masih admin di semua channel
+#  🏥 HEALTH CHECK
 # ═══════════════════════════════════════════════════════════
 
 @Client.on_callback_query(filters.regex(r"^owner_health$"))
 @owner_only
 async def cb_health(client: Client, cb: CallbackQuery):
     try:
-        await safe_edit(
-            cb.message,
-            "🏥 <b>Health Check</b>\n\n<i>Memeriksa semua channel partner...</i>",
-            markup=None,
-            parse_mode=PM,
-        )
-        await answer_cb(cb, "Memeriksa...")
+        from db.mongo import client as mongo_client
+        try:
+            mongo_client.admin.command("ping")
+            db_status = "🟢 Terhubung"
+        except Exception:
+            db_status = "🔴 Terputus"
 
-        from pyrogram.enums import ChatMemberStatus
-        from pyrogram.errors import ChatAdminRequired, ChannelPrivate, PeerIdInvalid
-        all_p = get_active_partners()
-        ok = fail = removed = 0
-        details = []
+        me       = await client.get_me()
+        bot_info = f"@{me.username}" if me.username else str(me.id)
 
-        me = await client.get_me()
-        for p in all_p[:20]:
-            cid  = p["_id"]
-            name = (p.get("channel_name") or str(cid))[:25]
-            try:
-                member = await client.get_chat_member(cid, me.id)
-                if member.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
-                    ok += 1
-                else:
-                    fail += 1
-                    details.append(f"⚠️ <b>{name}</b> — bukan admin")
-                    upsert_partner(cid, {"paused": True, "reason": "Bot bukan admin"})
-            except (ChatAdminRequired, ChannelPrivate, PeerIdInvalid):
-                removed += 1
-                details.append(f"❌ <b>{name}</b> — tidak bisa akses")
-                upsert_partner(cid, {"paused": True, "reason": "Tidak bisa akses channel"})
-            except Exception as e:
-                details.append(f"⚠️ <b>{name}</b> — error: {str(e)[:30]}")
-                fail += 1
+        total_p  = count_partners()
+        active_p = len(get_active_partners())
+        total_r  = posts.count_documents({})
 
-        report = "\n".join(details[:10]) if details else "✅ Semua channel sehat!"
         text = (
-            f"🏥 <b>Health Check Selesai</b>\n"
+            f"🏥 <b>Health Check</b>\n"
             f"<code>{SEP}</code>\n\n"
-            f"✅ OK           <code>{ok}</code>\n"
-            f"⚠️ Gagal       <code>{fail}</code>\n"
-            f"❌ Tidak bisa  <code>{removed}</code>\n\n"
-            f"{report}"
+            f"🤖 Bot         {bot_info}\n"
+            f"🗄️  MongoDB     {db_status}\n\n"
+            f"📡 Partner     <code>{active_p}</code> aktif / <code>{total_p}</code> total\n"
+            f"📦 Repost      <code>{total_r}</code> all-time\n\n"
+            f"⏰ Waktu       <code>{datetime.now(timezone.utc).strftime('%d %b %Y %H:%M UTC')}</code>"
         )
         markup = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Tools", callback_data="owner_tools")]])
         await safe_edit(cb.message, text, markup=markup, parse_mode=PM)
     except Exception as e:
         log.error(f"[cb_health] {e}")
-
-
-# ═══════════════════════════════════════════════════════════
-#  🔄 RESET SETTINGS
-# ═══════════════════════════════════════════════════════════
-
-@Client.on_callback_query(filters.regex(r"^owner_reset_settings_confirm$"))
-@owner_only
-async def cb_reset_settings_confirm(client: Client, cb: CallbackQuery):
-    try:
-        await safe_edit(
-            cb.message,
-            "⚠️ <b>Reset Semua Pengaturan Bot?</b>\n\nSemua setting global akan kembali ke default.\nData partner, user, dan repost <b>tidak</b> akan terhapus.",
-            markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ Ya, Reset", callback_data="owner_reset_settings_do"),
-                InlineKeyboardButton("❌ Batal", callback_data="owner_tools"),
-            ]]),
-            parse_mode=PM,
-        )
-    except Exception as e:
-        log.error(f"[cb_reset_settings_confirm] {e}")
-    finally:
-        await answer_cb(cb)
-
-
-@Client.on_callback_query(filters.regex(r"^owner_reset_settings_do$"))
-@owner_only
-async def cb_reset_settings_do(client: Client, cb: CallbackQuery):
-    try:
-        from db.mongo import settings_col
-        settings_col.delete_many({"_id": {"$regex": "^setting_"}})
-        await answer_cb(cb, "✅ Settings direset.")
-        await safe_edit(
-            cb.message,
-            "✅ <b>Semua pengaturan direset ke default.</b>",
-            markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Tools", callback_data="owner_tools")]]),
-            parse_mode=PM,
-        )
-    except Exception as e:
-        log.error(f"[cb_reset_settings_do] {e}")
-    finally:
-        await answer_cb(cb)
-
-
-# ═══════════════════════════════════════════════════════════
-#  📝 AKTIVITAS
-# ═══════════════════════════════════════════════════════════
-
-@Client.on_callback_query(filters.regex(r"^owner_activity$"))
-@owner_only
-async def cb_activity(client: Client, cb: CallbackQuery):
-    try:
-        events = get_recent_activity(limit=15)
-        EVENT_LABELS = {
-            "repost_success":   "✅ Repost berhasil",
-            "repost_fail":      "❌ Repost gagal",
-            "repost_deleted":   "🗑️ Repost dihapus",
-            "blacklist_blocked": "🚫 Diblacklist",
-            "partner_added":    "📡 Partner baru",
-            "partner_activated": "▶️ Aktifkan",
-            "partner_manual_add": "📋 Manual add",
-            "bot_removed":      "⚠️ Bot dicopot",
-        }
-
-        if not events:
-            lines = ["<i>Belum ada aktivitas.</i>"]
-        else:
-            lines = []
-            for ev in events:
-                ts    = ev.get("ts")
-                ts_s  = ts.strftime("%d/%m %H:%M") if ts else "—"
-                label = EVENT_LABELS.get(ev.get("event", ""), ev.get("event", "?"))
-                pid   = ev.get("partner_id")
-                p_str = f" · <code>{pid}</code>" if pid else ""
-                lines.append(f"<code>{ts_s}</code>  {label}{p_str}")
-
-        text = (
-            f"📝 <b>Log Aktivitas Terbaru</b>\n"
-            f"<code>{SEP}</code>\n\n"
-            + "\n".join(lines)
-        )
-        markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Refresh", callback_data="owner_activity")],
-            back_home(),
-        ])
-        await safe_edit(cb.message, text, markup=markup, parse_mode=PM)
-    except Exception as e:
-        log.error(f"[cb_activity] {e}")
     finally:
         await answer_cb(cb)
 
@@ -1070,36 +994,36 @@ async def cb_activity(client: Client, cb: CallbackQuery):
 # ═══════════════════════════════════════════════════════════
 
 def _settings_text() -> str:
-    auto_del    = get_bot_setting("auto_delete_repost", True)
-    allow_text  = get_bot_setting("allow_text_repost", True)
-    rate_limit  = get_bot_setting("rate_limit_enabled", True)
+    auto_del   = get_bot_setting("auto_delete_repost", True)
+    allow_text = get_bot_setting("allow_text_repost", True)
+    rate_limit = get_bot_setting("rate_limit_enabled", True)
     return (
         f"⚙️ <b>Pengaturan Bot</b>\n"
         f"<code>{SEP}</code>\n\n"
-        f"Auto hapus repost  {'✅' if auto_del else '❌'}\n"
-        f"Repost teks murni  {'✅' if allow_text else '❌'}\n"
-        f"Rate limit user    {'✅' if rate_limit else '❌'}\n"
+        f"🗑️ Auto hapus repost   {'✅ ON' if auto_del else '❌ OFF'}\n"
+        f"📝 Repost teks         {'✅ ON' if allow_text else '❌ OFF'}\n"
+        f"⚡ Rate limit          {'✅ ON' if rate_limit else '❌ OFF'}\n"
     )
 
 
 def _settings_markup() -> InlineKeyboardMarkup:
-    auto_del    = get_bot_setting("auto_delete_repost", True)
-    allow_text  = get_bot_setting("allow_text_repost", True)
-    rate_limit  = get_bot_setting("rate_limit_enabled", True)
+    auto_del   = get_bot_setting("auto_delete_repost", True)
+    allow_text = get_bot_setting("allow_text_repost", True)
+    rate_limit = get_bot_setting("rate_limit_enabled", True)
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
             f"{'✅' if auto_del else '❌'} Auto Hapus Repost",
             callback_data="owner_toggle_auto_delete",
         )],
         [InlineKeyboardButton(
-            f"{'✅' if allow_text else '❌'} Repost Teks Murni",
+            f"{'✅' if allow_text else '❌'} Repost Teks",
             callback_data="owner_toggle_text_repost",
         )],
         [InlineKeyboardButton(
-            f"{'✅' if rate_limit else '❌'} Rate Limit User",
+            f"{'✅' if rate_limit else '❌'} Rate Limit",
             callback_data="owner_toggle_rate_limit",
         )],
-        back_home(),
+        [InlineKeyboardButton("◀️ Menu Utama", callback_data="home")],
     ])
 
 
@@ -1114,44 +1038,132 @@ async def cb_settings(client: Client, cb: CallbackQuery):
         await answer_cb(cb)
 
 
+@Client.on_callback_query(filters.regex(r"^owner_reset_settings_confirm$"))
+@owner_only
+async def cb_reset_settings_confirm(client: Client, cb: CallbackQuery):
+    try:
+        await safe_edit(
+            cb.message,
+            "🔄 <b>Reset Semua Pengaturan?</b>\n\nSemua pengaturan akan kembali ke default.",
+            markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Ya, Reset", callback_data="owner_reset_settings_do"),
+                InlineKeyboardButton("❌ Batal",     callback_data="owner_settings"),
+            ]]),
+            parse_mode=PM,
+        )
+    except Exception as e:
+        log.error(f"[cb_reset_settings_confirm] {e}")
+    finally:
+        await answer_cb(cb)
+
+
+@Client.on_callback_query(filters.regex(r"^owner_reset_settings_do$"))
+@owner_only
+async def cb_reset_settings_do(client: Client, cb: CallbackQuery):
+    answered = False
+    try:
+        for key in ("auto_delete_repost", "allow_text_repost", "rate_limit_enabled"):
+            set_bot_setting(key, True)
+        await answer_cb(cb, "✅ Pengaturan direset.")
+        answered = True
+        await safe_edit(cb.message, _settings_text(), markup=_settings_markup(), parse_mode=PM)
+    except Exception as e:
+        log.error(f"[cb_reset_settings_do] {e}")
+    finally:
+        if not answered:
+            await answer_cb(cb)
+
+
 @Client.on_callback_query(filters.regex(r"^owner_toggle_auto_delete$"))
 @owner_only
 async def cb_toggle_auto_delete(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         cur = get_bot_setting("auto_delete_repost", True)
         set_bot_setting("auto_delete_repost", not cur)
         await answer_cb(cb, f"Auto delete: {'✅ ON' if not cur else '❌ OFF'}")
+        answered = True
         await safe_edit(cb.message, _settings_text(), markup=_settings_markup(), parse_mode=PM)
     except Exception as e:
         log.error(f"[cb_toggle_auto_delete] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 @Client.on_callback_query(filters.regex(r"^owner_toggle_text_repost$"))
 @owner_only
 async def cb_toggle_text_repost(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         cur = get_bot_setting("allow_text_repost", True)
         set_bot_setting("allow_text_repost", not cur)
         await answer_cb(cb, f"Repost teks: {'✅ ON' if not cur else '❌ OFF'}")
+        answered = True
         await safe_edit(cb.message, _settings_text(), markup=_settings_markup(), parse_mode=PM)
     except Exception as e:
         log.error(f"[cb_toggle_text_repost] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 @Client.on_callback_query(filters.regex(r"^owner_toggle_rate_limit$"))
 @owner_only
 async def cb_toggle_rate_limit(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         cur = get_bot_setting("rate_limit_enabled", True)
         set_bot_setting("rate_limit_enabled", not cur)
         await answer_cb(cb, f"Rate limit: {'✅ ON' if not cur else '❌ OFF'}")
+        answered = True
         await safe_edit(cb.message, _settings_text(), markup=_settings_markup(), parse_mode=PM)
     except Exception as e:
         log.error(f"[cb_toggle_rate_limit] {e}")
+    finally:
+        if not answered:
+            await answer_cb(cb)
+
+
+# ═══════════════════════════════════════════════════════════
+#  📝 AKTIVITAS
+# ═══════════════════════════════════════════════════════════
+
+@Client.on_callback_query(filters.regex(r"^owner_activity$"))
+@owner_only
+async def cb_activity(client: Client, cb: CallbackQuery):
+    try:
+        acts = get_recent_activity(limit=15)
+        if not acts:
+            text = f"📝 <b>Aktivitas</b>\n\nBelum ada aktivitas."
+        else:
+            event_label = {
+                "repost_success":    "✅ Repost",
+                "repost_fail":       "❌ Repost gagal",
+                "repost_deleted":    "🗑️ Repost dihapus",
+                "partner_added":     "➕ Partner baru",
+                "partner_activated": "▶️ Partner aktif",
+                "bot_removed":       "⚠️ Bot dicopot",
+                "blacklist_blocked": "🚫 Blacklist",
+                "partner_manual_add":"🔧 Daftar manual",
+            }
+            lines = [f"📝 <b>Aktivitas Terbaru</b>\n<code>{SEP}</code>"]
+            for a in acts:
+                ts    = a.get("ts")
+                ts_s  = ts.strftime("%d/%m %H:%M") if ts else "—"
+                evt   = event_label.get(a.get("event", ""), a.get("event", "?"))
+                pid   = a.get("partner_id")
+                pid_s = f"  <code>{pid}</code>" if pid else ""
+                lines.append(f"<code>{ts_s}</code>  {evt}{pid_s}")
+            text = "\n".join(lines)
+
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Refresh", callback_data="owner_activity")],
+            back_home(),
+        ])
+        await safe_edit(cb.message, text, markup=markup, parse_mode=PM)
+    except Exception as e:
+        log.error(f"[cb_activity] {e}")
     finally:
         await answer_cb(cb)
 
@@ -1170,10 +1182,10 @@ async def cb_banned_list(client: Client, cb: CallbackQuery):
         else:
             lines = []
             for b in banned[:15]:
-                uid = b["_id"]
+                uid    = b["_id"]
                 reason = b.get("reason", "—")
-                ts = b.get("banned_at")
-                ts_s = ts.strftime("%d/%m/%Y") if ts else "—"
+                ts     = b.get("banned_at")
+                ts_s   = ts.strftime("%d/%m/%Y") if ts else "—"
                 lines.append(f"🚫 <code>{uid}</code>  {ts_s}\n   <i>{reason[:40]}</i>")
 
         text = (
@@ -1215,18 +1227,17 @@ async def cb_ban_add(client: Client, cb: CallbackQuery):
 @Client.on_callback_query(filters.regex(r"^owner_ban_remove$"))
 @owner_only
 async def cb_ban_remove_prompt(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         banned = get_banned_list()
         if not banned:
             await answer_cb(cb, "Tidak ada user yang diblokir.", True)
+            answered = True
             return
         rows = []
         for b in banned[:10]:
             uid = b["_id"]
-            rows.append([InlineKeyboardButton(
-                f"✅ Unban {uid}",
-                callback_data=f"owner_unban_{uid}",
-            )])
+            rows.append([InlineKeyboardButton(f"✅ Unban {uid}", callback_data=f"owner_unban_{uid}")])
         rows.append([InlineKeyboardButton("◀️ Kembali", callback_data="owner_banned_list")])
         await safe_edit(
             cb.message,
@@ -1237,21 +1248,25 @@ async def cb_ban_remove_prompt(client: Client, cb: CallbackQuery):
     except Exception as e:
         log.error(f"[cb_ban_remove_prompt] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 @Client.on_callback_query(filters.regex(r"^owner_unban_(-?\d+)$"))
 @owner_only
 async def cb_unban(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         uid = int(cb.matches[0].group(1))
         unban_user(uid)
         await answer_cb(cb, f"✅ User {uid} di-unban.")
+        answered = True
         await cb_banned_list(client, cb)
     except Exception as e:
         log.error(f"[cb_unban] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1262,25 +1277,25 @@ async def cb_unban(client: Client, cb: CallbackQuery):
 @owner_only
 async def cb_export(client: Client, cb: CallbackQuery):
     try:
-        all_p  = get_all_partners()
+        all_p   = get_all_partners()
         total_r = posts.count_documents({})
-        today  = get_posts_today()
-        week   = get_posts_this_week()
+        today   = get_posts_today()
+        week    = get_posts_this_week()
 
         lines = [
-            f"📤 <b>Export Data FessBot</b>",
+            "📤 <b>Export Data FessBot</b>",
             f"<code>Dibuat: {datetime.now(timezone.utc).strftime('%d %b %Y %H:%M UTC')}</code>",
             f"<code>{SEP}</code>",
-            f"",
-            f"📊 STATISTIK GLOBAL",
+            "",
+            "📊 STATISTIK GLOBAL",
             f"Total Partner : {count_partners()}",
             f"Aktif         : {len(get_active_partners())}",
             f"Total User    : {count_users()}",
             f"Repost Hari ini: {today}",
             f"Repost 7 hari : {week}",
             f"Repost Semua  : {total_r}",
-            f"",
-            f"📋 DAFTAR CHANNEL PARTNER",
+            "",
+            "📋 DAFTAR CHANNEL PARTNER",
         ]
         for i, p in enumerate(all_p, 1):
             status = "AKTIF" if not p.get("paused") else "PAUSED"
@@ -1290,7 +1305,6 @@ async def cb_export(client: Client, cb: CallbackQuery):
             lines.append(f"{i}. [{status}] {name} {uname} — {rp} repost")
 
         text = "\n".join(lines)
-
         if len(text) > 4000:
             text = text[:3950] + "\n\n<i>...dipotong karena terlalu panjang</i>"
 
@@ -1307,7 +1321,7 @@ async def cb_export(client: Client, cb: CallbackQuery):
 
 
 # ═══════════════════════════════════════════════════════════
-#  NOOP
+#  NOOP (tombol halaman / dekoratif)
 # ═══════════════════════════════════════════════════════════
 
 @Client.on_callback_query(filters.regex(r"^noop$"))

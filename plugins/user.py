@@ -104,10 +104,12 @@ def _channel_list_markup(channels: list, page: int) -> InlineKeyboardMarkup:
 
 @Client.on_callback_query(filters.regex(r"^user_channels_(\d+)$"))
 async def cb_user_channels(client: Client, cb: CallbackQuery):
+    answered = False
     try:
         user_id = cb.from_user.id
         if await _is_blocked(client, cb, user_id):
             await answer_cb(cb)
+            answered = True
             return
 
         joined = await check_membership(client, user_id)
@@ -121,6 +123,7 @@ async def cb_user_channels(client: Client, cb: CallbackQuery):
                 parse_mode=PM,
             )
             await answer_cb(cb)
+            answered = True
             return
 
         page     = int(cb.matches[0].group(1))
@@ -155,7 +158,8 @@ async def cb_user_channels(client: Client, cb: CallbackQuery):
     except Exception as e:
         log.error(f"[cb_user_channels] {e}")
     finally:
-        await answer_cb(cb)
+        if not answered:
+            await answer_cb(cb)
 
 
 # ═══════════════════════════════════════════════════════════
