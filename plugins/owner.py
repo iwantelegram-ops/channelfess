@@ -553,8 +553,8 @@ async def cb_owner_search(client: Client, cb: CallbackQuery):
         await answer_cb(cb)
 
 
-# PERBAIKAN: Tambah ~filters.command() agar tidak memproses perintah /start /stats dll
-@Client.on_message(filters.text & filters.private & ~filters.command(), group=3)
+# PERBAIKAN: filter.regex untuk skip semua pesan yang diawali "/" (command)
+@Client.on_message(filters.text & filters.private & ~filters.regex(r"^/"), group=3)
 @owner_only
 async def handle_owner_text_input(client: Client, message: Message):
     uid  = message.from_user.id
