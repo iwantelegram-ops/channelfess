@@ -2,7 +2,7 @@ import asyncio
 import logging
 from pyrogram import Client
 from config import API_ID, API_HASH, BOT_TOKEN
-from db.mongo import sessions_col, peers_col
+from db.mongo import sessions_col, peers_col, ensure_indexes
 from db.mongo_storage import MongoStorage
 
 logging.basicConfig(
@@ -31,5 +31,10 @@ app.storage = MongoStorage(
 
 if __name__ == "__main__":
     log.info("🤖 FessBot v3 starting...")
+    try:
+        ensure_indexes()
+        log.info("✅ MongoDB indexes ensured.")
+    except Exception as e:
+        log.warning(f"⚠️ Gagal membuat indexes: {e}")
     app.run()
     log.info("🤖 FessBot v3 stopped.")
